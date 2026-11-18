@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  @apply bg-zinc-950 text-zinc-200 antialiased select-none;
+}
+input,
+textarea,
+pre,
+code {
+  @apply select-text;
+}
+@utility btn {
+  @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+}
+@utility btn-primary {
+  @apply btn bg-indigo-600 text-white hover:bg-indigo-500;
+}
+@utility btn-ghost {
+  @apply btn bg-zinc-800/70 text-zinc-200 hover:bg-zinc-700;
+}
+@utility btn-danger {
+  @apply btn bg-transparent text-red-400 hover:bg-red-500/10;
+}
+@utility input {
+  @apply w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500;
+}
+@utility label {
+  @apply mb-1 block text-xs font-medium tracking-wide text-zinc-400 uppercase;
+}

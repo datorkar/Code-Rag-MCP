@@ -1,0 +1,23 @@
+[package]
+name = "rag-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Headless MCP (stdio) server exposing local semantic code search"
+
+[features]
+cuda = ["rag-core/cuda"]
+directml = ["rag-core/directml"]
+
+[dependencies]
+rag-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+rmcp = { version = "3.11", features = ["server", "transport-io", "macros"] }
+schemars = "1"

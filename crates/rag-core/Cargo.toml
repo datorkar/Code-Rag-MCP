@@ -1,0 +1,46 @@
+[package]
+name = "rag-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# ONNX Runtime GPU execution providers (CPU is always the fallback).
+cuda = ["ort/cuda"]
+directml = ["fastembed/directml", "ort/directml"]
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+
+dirs = "6"
+ignore = "0.4"
+blake3 = { version = "1", features = ["mmap"] }
+sha2 = "0.10"
+hex = "0.4"
+fs2 = "0.4"
+futures = "0.3"
+
+fastembed = "7.7"
+ort = { version = "=2.0.0-rc.15", default-features = false }
+
+lancedb = "0.41"
+arrow-array = "58"
+arrow-schema = "58"
+
+text-splitter = { version = "0.33", features = ["code"] }
+tree-sitter = "0.27"
+tree-sitter-cpp = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-python = "0.25"
+
+[dev-dependencies]
+tempfile = "3"
