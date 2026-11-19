@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rag-core", "crates/rag-mcp", "src-tauri"]
+members = ["crates/rag-core", "crates/rag-mcp", "crates/workspace-hack", "src-tauri"]
 default-members = ["crates/rag-core", "crates/rag-mcp"]
 
 [workspace.package]

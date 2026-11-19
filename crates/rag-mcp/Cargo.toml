@@ -17,6 +17,7 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 rmcp = { version = "3.11", features = ["server", "transport-io", "macros"] }
 schemars = "1"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 # ONNX Runtime flavour per platform: Windows uses Windows ML (vendor EPs via the
 # Windows ML catalog, DirectML fallback); elsewhere the bundled ORT with CUDA

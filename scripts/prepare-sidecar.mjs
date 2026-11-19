@@ -9,17 +9,20 @@ import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const triple =
-  process.env.TAURI_ENV_TARGET_TRIPLE || execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
+const host = execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
+const triple = process.env.TAURI_ENV_TARGET_TRIPLE || host;
+// Build into the same target dir as `tauri build` (no --target for the host)
+// so rag-mcp and the app share one compiled dependency graph.
+const targetArgs = triple === host ? [] : ["--target", triple];
 const ext = triple.includes("windows") ? ".exe" : "";
 
 if (triple.includes("windows")) execSync("node scripts/fetch-winml.mjs", { stdio: "inherit" });
 
-execSync(["cargo", "build", "--release", "-p", "rag-mcp", "--target", triple].join(" "), {
+execSync(["cargo", "build", "--release", "-p", "rag-mcp", ...targetArgs].join(" "), {
   stdio: "inherit",
 });
 
-const outDir = join("target", triple, "release");
+const outDir = triple === host ? join("target", "release") : join("target", triple, "release");
 mkdirSync("src-tauri/binaries/ort", { recursive: true });
 const dst = join("src-tauri", "binaries", `rag-mcp-${triple}${ext}`);
 copyFileSync(join(outDir, `rag-mcp${ext}`), dst);

@@ -24,6 +24,7 @@ tracing-subscriber.workspace = true
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
 tauri-plugin-clipboard-manager = "2.5"
+workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
 
 # ONNX Runtime flavour per platform: Windows uses Windows ML (vendor EPs via the
 # Windows ML catalog, DirectML fallback); elsewhere the bundled ORT with CUDA
