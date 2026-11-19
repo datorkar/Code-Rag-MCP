@@ -227,3 +227,40 @@ mod tests {
         assert_eq!(specs[0].max_context, 8192);
     }
 }
+
+// --- reranking ---------------------------------------------------------------
+
+use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
+
+pub fn supported_rerankers() -> Vec<String> {
+    TextRerank::list_supported_models().into_iter().map(|m| m.model_code).collect()
+}
+
+pub fn resolve_reranker(name: &str) -> Result<RerankerModel> {
+    name.trim()
+        .parse::<RerankerModel>()
+        .map_err(|_| anyhow!("unsupported reranker '{name}'; supported: {}", supported_rerankers().join(", ")))
+}
+
+pub type SharedReranker = Arc<Mutex<TextRerank>>;
+
+pub fn cached_reranker(name: &str, ep: ExecutionProvider, cache_dir: &Path) -> Result<SharedReranker> {
+    static CACHE: OnceLock<Mutex<HashMap<String, SharedReranker>>> = OnceLock::new();
+    let key = format!("{}|{ep:?}", name.to_ascii_lowercase());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(r) = cache.lock().unwrap().get(&key) {
+        return Ok(r.clone());
+    }
+    let model = resolve_reranker(name)?;
+    tracing::info!("loading reranker {name} (ep {ep:?})");
+    let opts = RerankInitOptions::new(model)
+        .with_cache_dir(cache_dir.to_path_buf())
+        .with_show_download_progress(false)
+        .with_max_length(1024)
+        .with_execution_providers(execution_providers(ep));
+    let r = Arc::new(Mutex::new(
+        TextRerank::try_new(opts).with_context(|| format!("initialising reranker {name}"))?,
+    ));
+    cache.lock().unwrap().insert(key, r.clone());
+    Ok(r)
+}

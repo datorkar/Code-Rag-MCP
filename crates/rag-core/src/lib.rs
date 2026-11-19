@@ -9,6 +9,7 @@ pub mod engine;
 pub mod lock;
 pub mod manifest;
 pub mod paths;
+pub mod snippet;
 pub mod store;
 pub mod sync;
 pub mod walker;
@@ -17,7 +18,7 @@ pub use config::{AppConfig, ExecutionProvider, IndexConfig};
 pub use engine::{Engine, IndexInfo, IndexStatus, SaveResult, SearchOutcome};
 pub use paths::Paths;
 pub use store::SearchHit;
-pub use sync::{Phase, Progress, ProgressFn, SyncOptions, SyncReport};
+pub use sync::{Phase, Progress, ProgressFn, SyncOptions, SyncReport, SyncTooLarge};
 
 /// Error marker for user-requested cancellation (`err.is::<Cancelled>()`).
 #[derive(Debug, Clone, Copy, thiserror::Error)]

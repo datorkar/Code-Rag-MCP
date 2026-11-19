@@ -11,6 +11,7 @@ import type {
 export const api = {
   listIndexes: () => invoke<IndexInfo[]>("list_indexes"),
   listModels: () => invoke<ModelSpec[]>("list_models"),
+  listRerankers: () => invoke<string[]>("list_rerankers"),
   getSettings: () => invoke<GlobalSettings>("get_settings"),
   saveSettings: (settings: GlobalSettings) => invoke<GlobalSettings>("save_settings", { settings }),
   saveIndex: (index: IndexConfig, originalId: string | null) =>

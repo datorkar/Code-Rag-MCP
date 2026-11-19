@@ -8,6 +8,8 @@ use crate::lock::FileLock;
 use crate::paths::{write_atomic, Paths};
 
 pub const DEFAULT_EMBED_MODEL: &str = "jinaai/jina-embeddings-v2-base-code";
+/// Jina v2 reranker is trained on code retrieval as well as text.
+pub const DEFAULT_RERANKER: &str = "jinaai/jina-reranker-v2-base-multilingual";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -28,7 +30,21 @@ pub struct AppConfig {
     pub execution_provider: ExecutionProvider,
     /// Number of chunks per ONNX inference batch.
     pub embed_batch_size: usize,
+    /// Cross-encoder used to re-score hybrid results (`None` = disabled).
+    #[serde(default = "default_reranker")]
+    pub reranker_model: Option<String>,
+    /// Hybrid candidates fetched per search before reranking.
+    pub rerank_candidates: usize,
+    /// Searches only auto-sync when at most this many files changed; larger
+    /// updates (and full builds) are left to the GUI / `reindex_path`.
+    pub auto_sync_max_files: usize,
+    /// Results are trimmed to this many lines around the best-matching region.
+    pub snippet_max_lines: usize,
     pub indexes: Vec<IndexConfig>,
+}
+
+fn default_reranker() -> Option<String> {
+    Some(DEFAULT_RERANKER.into())
 }
 
 impl Default for AppConfig {
@@ -37,6 +53,10 @@ impl Default for AppConfig {
             active_embed_model: DEFAULT_EMBED_MODEL.into(),
             execution_provider: ExecutionProvider::Auto,
             embed_batch_size: 32,
+            reranker_model: Some(DEFAULT_RERANKER.into()),
+            rerank_candidates: 30,
+            auto_sync_max_files: 200,
+            snippet_max_lines: 40,
             indexes: Vec::new(),
         }
     }
@@ -193,5 +213,19 @@ impl AppConfig {
 
     pub fn index_mut(&mut self, id: &str) -> Option<&mut IndexConfig> {
         self.indexes.iter_mut().find(|i| i.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_fields_get_defaults() {
+        let c: AppConfig = serde_json::from_str(r#"{"execution_provider":"cuda","indexes":[]}"#).unwrap();
+        assert_eq!(c.reranker_model.as_deref(), Some(DEFAULT_RERANKER));
+        assert_eq!(c.auto_sync_max_files, 200);
+        let c: AppConfig = serde_json::from_str(r#"{"reranker_model":null}"#).unwrap();
+        assert_eq!(c.reranker_model, None, "explicit null disables");
     }
 }

@@ -71,6 +71,7 @@ async fn index_search_and_incremental_sync() {
     let out = engine.search("test", "take damage and die", 3, false).await.unwrap();
     assert_eq!(out.hits[0].path, "Source/Player/HealthComponent.cpp", "{:#?}", out.hits);
     assert!(out.hits[0].start_line >= 1);
+    assert!(out.notes.iter().all(|n| !n.contains("reranker")), "{:?}", out.notes);
 
     // No changes -> nothing embedded.
     let r = engine.sync("test", SyncOptions::default()).await.unwrap();
@@ -91,6 +92,30 @@ async fn index_search_and_incremental_sync() {
 
     let cfg = engine.config().unwrap();
     assert_eq!(cfg.index("test").unwrap().chunk_count as usize, r.total_chunks);
+    assert!(cfg.reranker_model.is_some(), "reranker on by default");
+
+    // Capped auto-sync: over the limit -> no sync, a note, stale-but-valid results.
+    engine.update_settings(|c| c.auto_sync_max_files = 0).unwrap();
+    std::fs::write(s.join("Source/Player/New.cpp"), "void UNew::Spawn() {}\n").unwrap();
+    let out = engine.search("test", "regenerate health", 5, true).await.unwrap();
+    assert!(out.auto_sync.is_none());
+    assert!(out.notes.iter().any(|n| n.contains("not auto-updated")), "{:?}", out.notes);
+    assert!(!out.hits.is_empty());
+
+    // Trimming: long chunk -> window around the matching line.
+    engine.update_settings(|c| c.snippet_max_lines = 5).unwrap();
+    let mut long = String::new();
+    for i in 0..60 {
+        long.push_str(&format!("    int Unrelated{i} = {i};\n"));
+    }
+    long.push_str("    float StaminaDrainPerSecond = 12.f;\n");
+    std::fs::write(s.join("Source/Player/Stamina.cpp"), format!("void UStamina::Init()\n{{\n{long}}}\n")).unwrap();
+    engine.sync("test", SyncOptions::default()).await.unwrap();
+    let out = engine.search("test", "StaminaDrainPerSecond", 1, false).await.unwrap();
+    let h = &out.hits[0];
+    assert_eq!(h.path, "Source/Player/Stamina.cpp");
+    assert!(h.text.lines().count() <= 5, "{}", h.text);
+    assert!(h.text.contains("StaminaDrainPerSecond"));
 
     engine.delete_index("test").await.unwrap();
     assert!(engine.config().unwrap().indexes.is_empty());

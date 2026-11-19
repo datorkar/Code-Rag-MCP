@@ -14,18 +14,19 @@ Requirements: Rust ≥ 1.90, Node 22, `protoc` (LanceDB dependency).
 Windows: MSVC build tools + WebView2 (preinstalled on Win10/11).
 
 ```powershell
-# MCP server only (CPU)
+# MCP server (CUDA by default; falls back to CPU at runtime if CUDA/cuDNN are missing)
 cargo build --release -p rag-mcp
-# with GPU execution providers
-cargo build --release -p rag-mcp --features cuda      # NVIDIA, needs CUDA 12 + cuDNN 9 on PATH
-cargo build --release -p rag-mcp --features directml  # any DX12 GPU on Windows
+cargo build --release -p rag-mcp --no-default-features                       # CPU only
+cargo build --release -p rag-mcp --no-default-features --features directml   # AMD/Intel DX12 GPUs
 
-# Desktop app (bundles rag-mcp next to the exe as a sidecar)
+# Desktop app: bundles rag-mcp + the ONNX Runtime CUDA provider DLLs next to the exe
 npm ci
-npx tauri dev                      # development
-npx tauri build                    # installer in target/release/bundle
-$env:RAG_FEATURES="directml"; npx tauri build   # GPU sidecar build
+npx tauri dev                       # development (run `cargo build -p rag-mcp` once first)
+npx tauri build                     # installer in target/release/bundle
+$env:RAG_FEATURES="none"; npx tauri build      # CPU-only bundle
 ```
+
+**CUDA:** the user's machine needs the NVIDIA CUDA runtime + cuDNN 9 on `PATH` (not bundled, ~1 GB). The ONNX Runtime CUDA 12 vs 13 build is chosen at compile time from `CUDA_HOME` (`...\CUDA\v12.x` → 12); force it with `ORT_CUDA_VERSION=12` or `13`. The GUI's chunks/sec readout shows whether the GPU is actually used (CPU is ~10–30x slower).
 
 ONNX Runtime binaries are downloaded at build time by `ort`; models are downloaded from Hugging Face on first use into `<data dir>/models`.
 
@@ -41,7 +42,7 @@ lancedb/idx_<id>.lance   chunks: path, start_line, end_line, text, vector
 models/                  FastEmbed ONNX cache
 ```
 
-`config.json` follows the blueprint schema (`active_embed_model`, `execution_provider` = `auto|cuda|directml|cpu`, `indexes[]` with `root_path`, `embed_model`, `allowed_extensions`, `ignore_dirs`, `chunk_size`, `chunk_overlap`, `auto_update_on_search`, `auto_update_cooldown_hours`, `last_indexed_at`, `chunk_count`), plus `embed_batch_size` (global) and `description` / `max_file_bytes` (per index).
+`config.json` follows the blueprint schema (`active_embed_model`, `execution_provider` = `auto|cuda|directml|cpu`, `indexes[]` with `root_path`, `embed_model`, `allowed_extensions`, `ignore_dirs`, `chunk_size`, `chunk_overlap`, `auto_update_on_search`, `auto_update_cooldown_hours`, `last_indexed_at`, `chunk_count`), plus global `embed_batch_size`, `reranker_model`, `rerank_candidates`, `auto_sync_max_files`, `snippet_max_lines` and `description` / `max_file_bytes` (per index).
 
 ## How indexing works
 
@@ -54,7 +55,9 @@ models/                  FastEmbed ONNX cache
 
 Changing an index's model or chunk settings changes its fingerprint → next sync is a full rebuild (the GUI warns and offers to do it now). Cancelling keeps all completed files; the next sync resumes.
 
-Search embeds the query (with the model's query prefix for BGE/Nomic), runs LanceDB hybrid search (vector + BM25, fused with Reciprocal Rank Fusion) and returns `path:start-end` snippets.
+Search embeds the query (with the model's query prefix for BGE/Nomic), runs LanceDB hybrid search (vector + BM25, fused with Reciprocal Rank Fusion) over the top `rerank_candidates` (30), re-scores them with a cross-encoder (`reranker_model`, default `jinaai/jina-reranker-v2-base-multilingual`, `null` disables), and returns the top `limit`. Each result is trimmed to the `snippet_max_lines` (40) lines that best match the query terms (identifiers are split on `::` and camelCase), labelled with the original chunk range.
+
+**Auto-sync on search** only runs inline when at most `auto_sync_max_files` (200) files changed and no full build is needed. Otherwise the search answers from the existing data with a note asking for "Index now" in the app (or `reindex_path`), so a tool call never blocks on a multi-minute build.
 
 > Note: current LanceDB versions ship their own native BM25 inverted index instead of the older Tantivy-based one; the behaviour is the same (hybrid + RRF), with no extra dependency.
 

@@ -12,7 +12,8 @@ use crate::lock::FileLock;
 use crate::manifest::Manifest;
 use crate::paths::Paths;
 use crate::store::{self, ChunkStore, SearchHit};
-use crate::sync::{sync_index, SyncOptions, SyncReport};
+use crate::snippet;
+use crate::sync::{sync_index, SyncOptions, SyncReport, SyncTooLarge};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -168,9 +169,19 @@ impl Engine {
         let mut auto_sync = None;
 
         if allow_auto_sync && ix.auto_update_on_search && ix.is_stale(Utc::now()) {
-            let opts = SyncOptions { lock_timeout: Some(Duration::ZERO), ..Default::default() };
+            let opts = SyncOptions {
+                lock_timeout: Some(Duration::ZERO),
+                max_changed_files: Some(app.auto_sync_max_files),
+                ..Default::default()
+            };
             match self.sync(id, opts).await {
                 Ok(r) => auto_sync = Some(r),
+                Err(e) if e.is::<SyncTooLarge>() => {
+                    notes.push(format!(
+                        "index not auto-updated: {e}; results may be out of date. \
+                         Ask the user to run \"Index now\" in the Local Code RAG app, or call reindex_path."
+                    ));
+                }
                 Err(e) => {
                     tracing::warn!("auto-sync of '{id}' skipped: {e:#}");
                     notes.push(format!("auto-update skipped: {e}"));
@@ -196,7 +207,56 @@ impl Engine {
         };
         let q = query.to_string();
         let vector = tokio::task::spawn_blocking(move || emb.lock().unwrap().embed_query(&q)).await??;
-        let hits = store.search(query, &vector, limit.clamp(1, 50)).await?;
+        let limit = limit.clamp(1, 50);
+        let candidates = if app.reranker_model.is_some() { limit.max(app.rerank_candidates) } else { limit };
+        let mut hits = store.search(query, &vector, candidates).await?;
+
+        if let Some(model) = app.reranker_model.clone().filter(|_| hits.len() > 1) {
+            match self.rerank(&model, app.execution_provider, query, &hits).await {
+                Ok(order) => {
+                    hits = order
+                        .into_iter()
+                        .map(|(i, score)| SearchHit { score, ..hits[i].clone() })
+                        .collect();
+                }
+                Err(e) => {
+                    tracing::warn!("rerank failed: {e:#}");
+                    notes.push(format!("reranker unavailable ({e}); showing hybrid ranking"));
+                }
+            }
+        }
+        hits.truncate(limit);
+        let hits = hits
+            .into_iter()
+            .map(|h| snippet::trim_hit(h, query, app.snippet_max_lines))
+            .collect();
         Ok(SearchOutcome { hits, auto_sync, notes })
+    }
+
+    /// Cross-encoder scores; returns `(hit index, score)` best first.
+    async fn rerank(
+        &self,
+        model: &str,
+        ep: crate::ExecutionProvider,
+        query: &str,
+        hits: &[SearchHit],
+    ) -> Result<Vec<(usize, f32)>> {
+        let rr = {
+            let (model, dir) = (model.to_string(), self.paths.models_dir());
+            tokio::task::spawn_blocking(move || embedder::cached_reranker(&model, ep, &dir)).await??
+        };
+        let docs: Vec<String> = hits
+            .iter()
+            .map(|h| {
+                let body: String = h.text.chars().take(3000).collect();
+                format!("// File: {}\n{body}", h.path)
+            })
+            .collect();
+        let q = query.to_string();
+        let res = tokio::task::spawn_blocking(move || rr.lock().unwrap().rerank(q, docs, false, Some(16)))
+            .await??;
+        let mut order: Vec<(usize, f32)> = res.into_iter().map(|r| (r.index, r.score)).collect();
+        order.sort_by(|a, b| b.1.total_cmp(&a.1));
+        Ok(order)
     }
 }

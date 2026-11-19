@@ -4,5 +4,8 @@ node_modules/
 /src-tauri/gen
 /src-tauri/binaries/*
 !/src-tauri/binaries/.gitkeep
+!/src-tauri/binaries/ort/
+/src-tauri/binaries/ort/*
+!/src-tauri/binaries/ort/README.txt
 *.tmp
 tsconfig.tsbuildinfo

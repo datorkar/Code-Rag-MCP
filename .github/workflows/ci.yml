@@ -6,6 +6,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Runners have no CUDA toolkit to detect; pick the ONNX Runtime CUDA build explicitly.
+  ORT_CUDA_VERSION: "12"
 
 jobs:
   core:

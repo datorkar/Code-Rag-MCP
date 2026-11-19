@@ -58,6 +58,18 @@ pub struct SyncOptions {
     pub progress: Option<ProgressFn>,
     /// How long to wait for the index lock. `None` = wait forever.
     pub lock_timeout: Option<Duration>,
+    /// Refuse (without touching anything) if a full rebuild is needed or more
+    /// than this many files changed. Used by search-triggered auto-sync.
+    pub max_changed_files: Option<usize>,
+}
+
+/// Returned by a capped sync that would be too large to run inline.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum SyncTooLarge {
+    #[error("index needs a full (re)build")]
+    FullRebuild,
+    #[error("{changed} files changed (auto-sync limit is {cap})")]
+    TooManyFiles { changed: usize, cap: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -171,6 +183,9 @@ async fn sync_inner(
     let full = opts.force_full
         || manifest.fingerprint != cfg.fingerprint()
         || (existing.is_none() && !manifest.files.is_empty());
+    if full && opts.max_changed_files.is_some() {
+        bail!(SyncTooLarge::FullRebuild);
+    }
     if full {
         tracing::info!("[{index_id}] full rebuild");
         drop(existing);
@@ -228,6 +243,13 @@ async fn sync_inner(
         diff.removed.len(),
         diff.unchanged
     );
+
+    if let Some(cap) = opts.max_changed_files {
+        let n = changed.len() + diff.removed.len();
+        if n > cap {
+            bail!(SyncTooLarge::TooManyFiles { changed: n, cap });
+        }
+    }
 
     let store = ChunkStore::open_or_create(&conn, index_id, spec.dim).await?;
     let mut report = SyncReport {

@@ -7,6 +7,9 @@ rust-version.workspace = true
 description = "Headless MCP (stdio) server exposing local semantic code search"
 
 [features]
+# CUDA by default (NVIDIA). ONNX Runtime falls back to CPU if CUDA/cuDNN are missing.
+# CPU-only: --no-default-features. Non-NVIDIA Windows GPUs: --no-default-features --features directml
+default = ["cuda"]
 cuda = ["rag-core/cuda"]
 directml = ["rag-core/directml"]
 

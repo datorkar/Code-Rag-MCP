@@ -1,21 +1,41 @@
-// Builds `rag-mcp` in release mode and copies it to src-tauri/binaries/ with
-// the target-triple suffix Tauri's `externalBin` bundling expects. The
-// bundler installs it next to the GUI executable as `rag-mcp(.exe)`.
+// Builds `rag-mcp` in release mode and stages it for Tauri bundling:
+//   src-tauri/binaries/rag-mcp-<triple>[.exe]   (externalBin -> next to the app exe)
+//   src-tauri/binaries/ort/*                    (ONNX Runtime GPU provider libs -> next to the app exe)
+//
+// Features: CUDA by default. Override with RAG_FEATURES, e.g.
+//   RAG_FEATURES=none      CPU only
+//   RAG_FEATURES=directml  DirectML instead of CUDA
+// The CUDA 12 vs 13 build of ONNX Runtime is auto-detected from CUDA_HOME;
+// force it with ORT_CUDA_VERSION=12|13.
 import { execSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const features = process.env.RAG_FEATURES ? ["--features", process.env.RAG_FEATURES] : [];
+const feat = process.env.RAG_FEATURES;
+const featureArgs =
+  feat === "none" ? ["--no-default-features"] : feat ? ["--no-default-features", "--features", feat] : [];
 const triple =
-  process.env.TAURI_ENV_TARGET_TRIPLE ||
-  execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
+  process.env.TAURI_ENV_TARGET_TRIPLE || execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
 const ext = triple.includes("windows") ? ".exe" : "";
 
-execSync(["cargo", "build", "--release", "-p", "rag-mcp", "--target", triple, ...features].join(" "), {
+execSync(["cargo", "build", "--release", "-p", "rag-mcp", "--target", triple, ...featureArgs].join(" "), {
   stdio: "inherit",
 });
-mkdirSync("src-tauri/binaries", { recursive: true });
-const src = join("target", triple, "release", `rag-mcp${ext}`);
+
+const outDir = join("target", triple, "release");
+mkdirSync("src-tauri/binaries/ort", { recursive: true });
 const dst = join("src-tauri", "binaries", `rag-mcp-${triple}${ext}`);
-copyFileSync(src, dst);
-console.log(`sidecar: ${src} -> ${dst}`);
+copyFileSync(join(outDir, `rag-mcp${ext}`), dst);
+console.log(`sidecar: ${dst}`);
+
+// Provider libs (symlinks into the ort cache on Unix; resolve them). TensorRT
+// providers are skipped: they are huge and unused.
+for (const f of readdirSync("src-tauri/binaries/ort")) {
+  if (f !== "README.txt") rmSync(join("src-tauri/binaries/ort", f));
+}
+for (const f of readdirSync(outDir)) {
+  if (/onnxruntime_providers_(cuda|shared)\.(dll|so)$/.test(f) || /^DirectML\.dll$/i.test(f)) {
+    copyFileSync(realpathSync(join(outDir, f)), join("src-tauri/binaries/ort", f));
+    console.log(`ort lib: ${f}`);
+  }
+}

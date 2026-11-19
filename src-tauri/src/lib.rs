@@ -31,6 +31,11 @@ struct GlobalSettings {
     active_embed_model: String,
     execution_provider: ExecutionProvider,
     embed_batch_size: usize,
+    reranker_model: Option<String>,
+    rerank_candidates: usize,
+    auto_sync_max_files: usize,
+    snippet_max_lines: usize,
+    #[serde(default)]
     data_dir: String,
     #[serde(default)]
     gpu_features: Vec<String>,
@@ -72,6 +77,11 @@ fn list_models() -> Vec<ModelSpec> {
 }
 
 #[tauri::command]
+fn list_rerankers() -> Vec<String> {
+    embedder::supported_rerankers()
+}
+
+#[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> CmdResult<GlobalSettings> {
     let c = state.engine.config().map_err(err)?;
     Ok(settings_of(&c, &state.engine))
@@ -88,6 +98,10 @@ fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
         active_embed_model: c.active_embed_model.clone(),
         execution_provider: c.execution_provider,
         embed_batch_size: c.embed_batch_size,
+        reranker_model: c.reranker_model.clone(),
+        rerank_candidates: c.rerank_candidates,
+        auto_sync_max_files: c.auto_sync_max_files,
+        snippet_max_lines: c.snippet_max_lines,
         data_dir: engine.paths.root().display().to_string(),
         gpu_features: gpu,
     }
@@ -96,12 +110,20 @@ fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
 #[tauri::command]
 fn save_settings(state: State<'_, AppState>, settings: GlobalSettings) -> CmdResult<GlobalSettings> {
     embedder::resolve_model(&settings.active_embed_model).map_err(err)?;
+    let reranker = settings.reranker_model.clone().filter(|m| !m.trim().is_empty());
+    if let Some(r) = &reranker {
+        embedder::resolve_reranker(r).map_err(err)?;
+    }
     let c = state
         .engine
         .update_settings(|c| {
             c.active_embed_model = settings.active_embed_model.clone();
             c.execution_provider = settings.execution_provider;
             c.embed_batch_size = settings.embed_batch_size.clamp(1, 512);
+            c.reranker_model = reranker.clone();
+            c.rerank_candidates = settings.rerank_candidates.clamp(5, 200);
+            c.auto_sync_max_files = settings.auto_sync_max_files;
+            c.snippet_max_lines = settings.snippet_max_lines;
         })
         .map_err(err)?;
     Ok(settings_of(&c, &state.engine))
@@ -145,7 +167,7 @@ fn start_index(
         let _ = emitter.emit("index-progress", p);
     });
     tauri::async_runtime::spawn(async move {
-        let opts = SyncOptions { force_full, cancel, progress: Some(progress), lock_timeout: None };
+        let opts = SyncOptions { force_full, cancel, progress: Some(progress), ..Default::default() };
         let res = engine.sync(&index_id, opts).await;
         let ev = match res {
             Ok(r) => FinishedEvent {
@@ -296,6 +318,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_indexes,
             list_models,
+            list_rerankers,
             get_settings,
             save_settings,
             save_index,

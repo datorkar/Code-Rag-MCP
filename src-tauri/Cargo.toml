@@ -14,6 +14,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7", features = [] }
 
 [features]
+# CUDA by default (NVIDIA). ONNX Runtime falls back to CPU if CUDA/cuDNN are missing.
+# CPU-only: --no-default-features. Non-NVIDIA Windows GPUs: --no-default-features --features directml
+default = ["cuda"]
 cuda = ["rag-core/cuda"]
 directml = ["rag-core/directml"]
 

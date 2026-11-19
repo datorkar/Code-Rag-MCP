@@ -44,6 +44,9 @@ pub struct SearchHit {
     pub end_line: u32,
     pub score: f32,
     pub text: String,
+    /// Full line range of the stored chunk when `text` was trimmed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_lines: Option<(u32, u32)>,
 }
 
 pub async fn connect(paths: &Paths) -> Result<Connection> {
@@ -231,6 +234,7 @@ impl ChunkStore {
                     end_line: end.value(i),
                     score: score[i],
                     text: text.value(i).to_string(),
+                    chunk_lines: None,
                 });
             }
         }

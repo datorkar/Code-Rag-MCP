@@ -8,8 +8,8 @@ rust-version.workspace = true
 [features]
 default = []
 # ONNX Runtime GPU execution providers (CPU is always the fallback).
-cuda = ["ort/cuda"]
-directml = ["fastembed/directml", "ort/directml"]
+cuda = ["ort/cuda", "ort/copy-dylibs"]
+directml = ["fastembed/directml", "ort/directml", "ort/copy-dylibs"]
 
 [dependencies]
 anyhow.workspace = true

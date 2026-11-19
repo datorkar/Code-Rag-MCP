@@ -41,6 +41,10 @@ export interface GlobalSettings {
   active_embed_model: string;
   execution_provider: ExecutionProvider;
   embed_batch_size: number;
+  reranker_model: string | null;
+  rerank_candidates: number;
+  auto_sync_max_files: number;
+  snippet_max_lines: number;
   data_dir: string;
   gpu_features: string[];
 }

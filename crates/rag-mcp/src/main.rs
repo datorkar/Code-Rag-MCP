@@ -101,7 +101,7 @@ impl RagServer {
     }
 
     #[tool(
-        description = "Semantic + keyword (hybrid BM25/vector) search over a local code index. Returns the most relevant code snippets with file paths and line ranges. Use precise identifiers (class/function names) and/or a natural-language description of the behaviour you are looking for."
+        description = "Semantic + keyword (hybrid BM25/vector, cross-encoder reranked) search over a local code index. Returns the most relevant code excerpts with file paths and line ranges; open the file for surrounding context. Use precise identifiers (class/function names) and/or a natural-language description of the behaviour you are looking for. Small on-disk changes are synced automatically before searching; large ones are reported in a note."
     )]
     async fn search_index(&self, Parameters(args): Parameters<SearchArgs>) -> String {
         let limit = args.limit.unwrap_or(6);
@@ -135,9 +135,13 @@ impl RagServer {
         }
         let _ = writeln!(out, "Index root: {root}\n");
         for (n, h) in outcome.hits.iter().enumerate() {
+            let trimmed = h
+                .chunk_lines
+                .map(|(a, b)| format!(", excerpt of chunk {a}-{b}"))
+                .unwrap_or_default();
             let _ = writeln!(
                 out,
-                "### {}. {}:{}-{}  (score {:.3})\n```{}\n{}\n```\n",
+                "### {}. {}:{}-{}  (score {:.3}{trimmed})\n```{}\n{}\n```\n",
                 n + 1,
                 h.path,
                 h.start_line,
@@ -151,7 +155,7 @@ impl RagServer {
     }
 
     #[tool(
-        description = "Re-synchronise a local code index with the files on disk (incremental by default: only new/modified/deleted files are processed). Set force_full=true to rebuild from scratch."
+        description = "Re-synchronise a local code index with the files on disk (incremental by default: only new/modified/deleted files are processed). Set force_full=true to rebuild from scratch. Large updates can take several minutes; prefer asking the user to use the Local Code RAG app for initial builds."
     )]
     async fn reindex_path(&self, Parameters(args): Parameters<ReindexArgs>) -> String {
         let opts = SyncOptions {
