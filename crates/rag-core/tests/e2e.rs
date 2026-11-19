@@ -65,6 +65,7 @@ async fn index_search_and_incremental_sync() {
         .unwrap();
     assert_eq!(r.files_added, 2);
     assert!(r.total_chunks >= 2);
+    assert!(r.timings.embed > 0.0 && r.timings.scan > 0.0, "{:?}", r.timings);
     assert!(phases.lock().unwrap().contains(&Phase::Embedding));
 
     let out = engine.search("test", "take damage and die", 3, false).await.unwrap();
@@ -109,7 +110,20 @@ async fn index_search_and_incremental_sync() {
     }
     long.push_str("    float StaminaDrainPerSecond = 12.f;\n");
     std::fs::write(s.join("Source/Player/Stamina.cpp"), format!("void UStamina::Init()\n{{\n{long}}}\n")).unwrap();
-    engine.sync("test", SyncOptions::default()).await.unwrap();
+    let first = engine.sync("test", SyncOptions::default()).await.unwrap();
+    assert!(first.chunks_embedded >= 3, "Stamina.cpp spans several chunks: {first:?}");
+
+    // Edit one line at the end of the long file: only the affected chunk(s)
+    // are re-embedded, the rest reuse their cached vectors.
+    let long2 = long.replace("    float StaminaDrainPerSecond = 12.f;\n", "    float StaminaDrainPerSecond = 15.f; // tuned\n");
+    std::fs::write(s.join("Source/Player/Stamina.cpp"), format!("void UStamina::Init()\n{{\n{long2}}}\n")).unwrap();
+    let r = engine.sync("test", SyncOptions::default()).await.unwrap();
+    assert_eq!(r.files_modified, 1);
+    assert!(r.chunks_reused > 0, "unchanged chunks reused: {r:?}");
+    assert!(r.chunks_embedded < first.chunks_embedded, "fewer chunks embedded: {r:?}");
+    let out = engine.search("test", "StaminaDrainPerSecond tuned", 1, false).await.unwrap();
+    assert!(out.hits[0].text.contains("15.f"), "search sees the edit: {}", out.hits[0].text);
+
     let out = engine.search("test", "StaminaDrainPerSecond", 1, false).await.unwrap();
     let h = &out.hits[0];
     assert_eq!(h.path, "Source/Player/Stamina.cpp");

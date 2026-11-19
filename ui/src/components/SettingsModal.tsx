@@ -78,16 +78,35 @@ export function SettingsModal({
           </p>
         </div>
         <div>
-          <label className="label">Embedding batch size</label>
-          <input
-            type="number"
-            className="input w-32"
-            min={1}
-            max={512}
-            value={s.embed_batch_size}
-            onChange={(e) => setS({ ...s, embed_batch_size: Number(e.target.value) })}
-          />
-          <p className="mt-1 text-xs text-zinc-500">32–64 is a good range; larger batches need more VRAM.</p>
+          <label className="label">Embedding batches</label>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="mb-1 text-xs text-zinc-500">Token budget per batch</div>
+              <input
+                type="number"
+                className="input"
+                min={0}
+                step={1024}
+                value={s.embed_token_budget}
+                onChange={(e) => setS({ ...s, embed_token_budget: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-zinc-500">Max chunks per batch</div>
+              <input
+                type="number"
+                className="input"
+                min={0}
+                max={512}
+                value={s.embed_batch_size}
+                onChange={(e) => setS({ ...s, embed_batch_size: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            0 = auto (32k tokens on GPU, 8k on CPU, no chunk cap). Batches shrink automatically if the GPU runs out of
+            memory.
+          </p>
         </div>
         <div className="border-t border-zinc-800 pt-4">
           <label className="label">Reranker (cross-encoder)</label>

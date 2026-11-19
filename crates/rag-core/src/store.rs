@@ -1,6 +1,7 @@
 //! LanceDB storage: one table per index with a native BM25 full-text index on
 //! `text` and brute-force / IVF vector search on `vector`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -29,6 +30,9 @@ fn schema(dim: usize) -> SchemaRef {
         Field::new("start_line", DataType::UInt32, false),
         Field::new("end_line", DataType::UInt32, false),
         Field::new("text", DataType::Utf8, false),
+        // blake3 of the exact embedding input; lets unchanged chunks reuse
+        // their vector when a file is re-synced.
+        Field::new("text_hash", DataType::Utf8, false),
         Field::new(
             "vector",
             DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim as i32),
@@ -109,10 +113,17 @@ impl ChunkStore {
         Ok(())
     }
 
-    pub async fn add(&self, chunks: &[Chunk], vectors: Vec<Vec<f32>>, dim: usize) -> Result<()> {
+    pub async fn add(
+        &self,
+        chunks: &[Chunk],
+        hashes: &[String],
+        vectors: Vec<Vec<f32>>,
+        dim: usize,
+    ) -> Result<()> {
         if chunks.is_empty() {
             return Ok(());
         }
+        let text_hash = StringArray::from_iter_values(hashes.iter().map(|h| h.as_str()));
         let path = StringArray::from_iter_values(chunks.iter().map(|c| c.rel_path.as_str()));
         let start = UInt32Array::from_iter_values(chunks.iter().map(|c| c.start_line));
         let end = UInt32Array::from_iter_values(chunks.iter().map(|c| c.end_line));
@@ -123,9 +134,70 @@ impl ChunkStore {
         );
         let batch = RecordBatch::try_new(
             schema(dim),
-            vec![Arc::new(path), Arc::new(start), Arc::new(end), Arc::new(text), Arc::new(vector)],
+            vec![
+                Arc::new(path),
+                Arc::new(start),
+                Arc::new(end),
+                Arc::new(text),
+                Arc::new(text_hash),
+                Arc::new(vector),
+            ],
         )?;
         self.table.add(batch).execute().await.context("adding chunks")?;
+        Ok(())
+    }
+
+    /// `text_hash -> vector` for every stored chunk of the given paths
+    /// (read before those paths are deleted and re-chunked).
+    pub async fn cached_vectors(&self, paths: &[String]) -> Result<HashMap<String, Vec<f32>>> {
+        let mut out = HashMap::new();
+        for batch in paths.chunks(256) {
+            let list = batch
+                .iter()
+                .map(|p| format!("'{}'", p.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let batches: Vec<RecordBatch> = self
+                .table
+                .query()
+                .only_if(format!("path IN ({list})"))
+                .select(lancedb::query::Select::columns(&["text_hash", "vector"]))
+                .execute()
+                .await?
+                .try_collect()
+                .await?;
+            for b in &batches {
+                let hashes = b.column_by_name("text_hash").context("text_hash")?.as_string::<i32>();
+                let vecs = b.column_by_name("vector").context("vector")?.as_fixed_size_list();
+                for i in 0..b.num_rows() {
+                    let v = vecs.value(i);
+                    let v = v.as_primitive::<Float32Type>().values().to_vec();
+                    out.insert(hashes.value(i).to_string(), v);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// After a sync: full rebuild of indices (+ compaction) for large changes,
+    /// otherwise an incremental index update that only covers new rows.
+    pub async fn update_indices(&self, changed_rows: usize) -> Result<()> {
+        let total = self.count().await?;
+        if total == 0 {
+            return Ok(());
+        }
+        let large = changed_rows * 10 >= total; // >= 10% of the table
+        if large || !self.has_fts_index().await {
+            return self.rebuild_indices().await;
+        }
+        if let Err(e) = self
+            .table
+            .optimize(lancedb::table::OptimizeAction::Index(lancedb::table::OptimizeOptions::default()))
+            .await
+        {
+            tracing::warn!("incremental index update failed ({e}); rebuilding");
+            return self.rebuild_indices().await;
+        }
         Ok(())
     }
 

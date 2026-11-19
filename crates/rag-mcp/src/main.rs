@@ -165,7 +165,7 @@ impl RagServer {
         };
         match self.engine.sync(&args.index_id, opts).await {
             Ok(r) => format!(
-                "Index '{}' synced in {:.1}s{}: scanned {} files (+{} added, ~{} modified, -{} removed), embedded {} chunks, {} chunks total.",
+                "Index '{}' synced in {:.1}s{}: scanned {} files (+{} added, ~{} modified, -{} removed), embedded {} chunks ({} reused), {} chunks total.",
                 r.index_id,
                 r.duration_secs,
                 if r.full_rebuild { " (full rebuild)" } else { "" },
@@ -174,6 +174,7 @@ impl RagServer {
                 r.files_modified,
                 r.files_removed,
                 r.chunks_embedded,
+                r.chunks_reused,
                 r.total_chunks
             ),
             Err(e) => format!("Error: {e:#}"),

@@ -72,6 +72,28 @@ pub enum SyncTooLarge {
     TooManyFiles { changed: usize, cap: usize },
 }
 
+/// Seconds spent per phase (writing overlaps embedding).
+#[derive(Debug, Clone, Copy, Serialize, Default)]
+pub struct PhaseTimings {
+    pub scan: f64,
+    pub delete: f64,
+    pub chunk: f64,
+    pub load_model: f64,
+    pub embed: f64,
+    pub write: f64,
+    pub index: f64,
+}
+
+impl std::fmt::Display for PhaseTimings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "scan {:.1}s · chunk {:.1}s · model {:.1}s · embed {:.1}s · write {:.1}s · index {:.1}s",
+            self.scan, self.chunk, self.load_model, self.embed, self.write, self.index
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct SyncReport {
     pub index_id: String,
@@ -81,8 +103,11 @@ pub struct SyncReport {
     pub files_modified: usize,
     pub files_removed: usize,
     pub chunks_embedded: usize,
+    /// Chunks whose vector was reused (unchanged text or duplicate in this sync).
+    pub chunks_reused: usize,
     pub total_chunks: usize,
     pub duration_secs: f64,
+    pub timings: PhaseTimings,
 }
 
 struct Reporter {
@@ -195,6 +220,8 @@ async fn sync_inner(
     }
 
     // --- walk + hash -------------------------------------------------------
+    let mut timings = PhaseTimings::default();
+    let t_scan = Instant::now();
     rep.phase(Phase::Scanning, format!("scanning {}", cfg.root_path));
     let (files, hashed) = {
         let cfg = cfg.clone();
@@ -231,6 +258,7 @@ async fn sync_inner(
     };
     rep.p.files_scanned = files.len();
     rep.p.files_total = files.len();
+    timings.scan = t_scan.elapsed().as_secs_f64();
 
     let diff = manifest::diff(&manifest.files, &hashed);
     let changed: Vec<String> = diff.changed().cloned().collect();
@@ -259,6 +287,7 @@ async fn sync_inner(
         files_added: diff.added.len(),
         files_modified: diff.modified.len(),
         files_removed: diff.removed.len(),
+        timings,
         ..Default::default()
     };
 
@@ -274,6 +303,11 @@ async fn sync_inner(
     // `added` is included too: a cancelled previous run may have left partial
     // chunks for files that never made it into the manifest.
     rep.phase(Phase::Deleting, "removing stale chunks".to_string());
+    let t_del = Instant::now();
+    // Vectors of the changed files' current chunks, keyed by text hash: chunks
+    // whose text is unchanged are not re-embedded.
+    let cache: HashMap<String, Vec<f32>> =
+        if full { HashMap::new() } else { store.cached_vectors(&changed).await? };
     let to_delete: Vec<String> = diff.removed.iter().chain(changed.iter()).cloned().collect();
     if !full {
         store.delete_paths(&to_delete).await?;
@@ -282,9 +316,11 @@ async fn sync_inner(
         manifest.files.remove(p);
     }
     manifest.save(paths, index_id)?;
+    report.timings.delete = t_del.elapsed().as_secs_f64();
     check(&cancel)?;
 
     // --- chunk ---------------------------------------------------------------
+    let t_chunk = Instant::now();
     rep.phase(Phase::Chunking, format!("chunking {} files", changed.len()));
     let abs: HashMap<&str, &std::path::Path> =
         files.iter().map(|f| (f.rel_path.as_str(), f.abs_path.as_path())).collect();
@@ -325,84 +361,184 @@ async fn sync_inner(
         }
     }
 
-    // --- embed (length-sorted to minimise padding) ---------------------------
-    let mut order: Vec<usize> = (0..chunks.len()).collect();
-    order.sort_by_key(|&i| chunks[i].text.len());
-    rep.p.chunks_total = chunks.len();
+    report.timings.chunk = t_chunk.elapsed().as_secs_f64();
 
-    rep.phase(Phase::LoadingModel, format!("loading {}", spec.id));
-    let max_len = embedder::max_length_for_chunk_size(cfg.chunk_size);
-    let emb = {
-        let (model, ep, dir) = (cfg.embed_model.clone(), app.execution_provider, paths.models_dir());
-        tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len)).await??
-    };
-
-    rep.phase(Phase::Embedding, None);
-    rep.embed_start = Some(Instant::now());
-    let batch = app.embed_batch_size.clamp(1, 512);
-    const FLUSH_ROWS: usize = 2048;
-    let mut pend_chunks: Vec<Chunk> = Vec::new();
-    let mut pend_vecs: Vec<Vec<f32>> = Vec::new();
-    let mut cancelled = false;
-
-    for ids in order.chunks(batch) {
-        if cancel.load(Ordering::Relaxed) {
-            cancelled = true;
-            break;
+    // --- reuse cached vectors / dedupe -----------------------------------------
+    let hashes: Vec<String> =
+        chunks.iter().map(|c| blake3::hash(c.embedding_input().as_bytes()).to_hex().to_string()).collect();
+    let mut vecs: Vec<Option<Vec<f32>>> = hashes.iter().map(|h| cache.get(h).cloned()).collect();
+    drop(cache);
+    // Unique chunks that still need embedding; duplicates ride along.
+    let mut dups: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut unique: Vec<usize> = Vec::new();
+    for (i, h) in hashes.iter().enumerate() {
+        if vecs[i].is_some() {
+            continue;
         }
-        let texts: Vec<String> = ids.iter().map(|&i| chunks[i].embedding_input()).collect();
-        let e = emb.clone();
-        let vecs = tokio::task::spawn_blocking(move || e.lock().unwrap().embed_documents(&texts, batch))
-            .await??;
-        pend_chunks.extend(ids.iter().map(|&i| chunks[i].clone()));
-        pend_vecs.extend(vecs);
-        rep.p.chunks_embedded += ids.len();
-        report.chunks_embedded += ids.len();
-        rep.emit(false);
+        let entry = dups.entry(h.as_str()).or_default();
+        if entry.is_empty() {
+            unique.push(i);
+        }
+        entry.push(i);
+    }
+    report.chunks_reused = chunks.len() - unique.len();
 
-        if pend_chunks.len() >= FLUSH_ROWS {
-            flush(&store, &mut pend_chunks, &mut pend_vecs, spec.dim, &mut remaining, &hashed, &mut manifest)
-                .await?;
-            manifest.save(paths, index_id)?;
+    // --- writer task (overlaps embedding) ------------------------------------
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<WriteBatch>(2);
+    let writer = {
+        let store = ChunkStore { table: store.table.clone() };
+        let (paths, id, dim) = (paths.clone(), index_id.to_string(), spec.dim);
+        let hashed = hashed.clone();
+        let mut manifest = std::mem::take(&mut manifest);
+        tokio::spawn(async move {
+            let mut write_secs = 0.0;
+            while let Some(b) = rx.recv().await {
+                let t = Instant::now();
+                store.add(&b.chunks, &b.hashes, b.vecs, dim).await?;
+                for c in &b.chunks {
+                    let n = remaining.get_mut(&c.rel_path).expect("tracked");
+                    *n -= 1;
+                    if *n == 0 {
+                        if let Some(e) = hashed.get(&c.rel_path) {
+                            manifest.files.insert(c.rel_path.clone(), e.clone());
+                        }
+                    }
+                }
+                manifest.save(&paths, &id)?;
+                write_secs += t.elapsed().as_secs_f64();
+            }
+            anyhow::Ok((manifest, write_secs))
+        })
+    };
+    const FLUSH_ROWS: usize = 2048;
+    let mut pending = WriteBatch::default();
+
+    // Reused chunks go straight to the writer.
+    for i in 0..chunks.len() {
+        if let Some(v) = vecs[i].take() {
+            pending.push(&chunks[i], &hashes[i], v);
+            if pending.len() >= FLUSH_ROWS {
+                tx.send(std::mem::take(&mut pending)).await.map_err(|_| anyhow!("writer stopped"))?;
+            }
         }
     }
-    flush(&store, &mut pend_chunks, &mut pend_vecs, spec.dim, &mut remaining, &hashed, &mut manifest)
-        .await?;
-    manifest.save(paths, index_id)?;
+
+    // --- embed (length-sorted, token-budget batches) --------------------------
+    let max_len = embedder::max_length_for_chunk_size(cfg.chunk_size);
+    unique.sort_by_key(|&i| chunks[i].text.len());
+    let tokens: Vec<usize> =
+        unique.iter().map(|&i| crate::batching::est_tokens(chunks[i].text.len(), max_len)).collect();
+    rep.p.chunks_total = unique.len();
+
+    let mut cancelled = false;
+    if !unique.is_empty() {
+        let t_model = Instant::now();
+        rep.phase(Phase::LoadingModel, format!("loading {}", spec.id));
+        let emb = {
+            let (model, ep, dir) = (cfg.embed_model.clone(), app.execution_provider, paths.models_dir());
+            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len)).await??
+        };
+        report.timings.load_model = t_model.elapsed().as_secs_f64();
+
+        let gpu = !matches!(app.execution_provider, crate::ExecutionProvider::Cpu);
+        let budget = Arc::new(std::sync::atomic::AtomicUsize::new(match app.embed_token_budget {
+            0 if gpu => crate::batching::GPU_TOKEN_BUDGET,
+            0 => crate::batching::CPU_TOKEN_BUDGET,
+            n => n,
+        }));
+        let reused_msg = (report.chunks_reused > 0).then(|| format!("{} chunks reused", report.chunks_reused));
+        rep.phase(Phase::Embedding, reused_msg);
+        rep.embed_start = Some(Instant::now());
+
+        let mut i = 0;
+        while i < unique.len() {
+            if cancel.load(Ordering::Relaxed) {
+                cancelled = true;
+                break;
+            }
+            let end = crate::batching::next_batch_end(&tokens, i, budget.load(Ordering::Relaxed), app.embed_batch_size);
+            let ids: Vec<usize> = unique[i..end].to_vec();
+            let texts: Vec<String> = ids.iter().map(|&k| chunks[k].embedding_input()).collect();
+            let (e, b) = (emb.clone(), budget.clone());
+            let t = Instant::now();
+            let out = tokio::task::spawn_blocking(move || embed_split(&mut e.lock().unwrap(), &texts, &b)).await??;
+            report.timings.embed += t.elapsed().as_secs_f64();
+            for (k, v) in ids.iter().zip(out) {
+                let same = &dups[hashes[*k].as_str()];
+                for &d in same {
+                    pending.push(&chunks[d], &hashes[d], v.clone());
+                }
+            }
+            rep.p.chunks_embedded += ids.len();
+            report.chunks_embedded += ids.len();
+            rep.emit(false);
+            if pending.len() >= FLUSH_ROWS {
+                tx.send(std::mem::take(&mut pending)).await.map_err(|_| anyhow!("writer stopped"))?;
+            }
+            i = end;
+        }
+    }
+    if !pending.is_empty() {
+        tx.send(pending).await.map_err(|_| anyhow!("writer stopped"))?;
+    }
+    drop(tx);
+    let (_manifest, write_secs) = writer.await??;
+    report.timings.write = write_secs;
     if cancelled {
         // Keep what was written; complete files are in the manifest and the
         // rest will be redone on the next sync.
         bail!(Cancelled);
     }
 
-    rep.phase(Phase::BuildingIndex, "building full-text index".to_string());
-    store.rebuild_indices().await?;
+    rep.phase(Phase::BuildingIndex, "updating indexes".to_string());
+    let t_index = Instant::now();
+    store.update_indices(chunks.len() + to_delete.len()).await?;
+    report.timings.index = t_index.elapsed().as_secs_f64();
     finish(paths, index_id, &store, report, rep).await
 }
 
-async fn flush(
-    store: &ChunkStore,
-    chunks: &mut Vec<Chunk>,
-    vecs: &mut Vec<Vec<f32>>,
-    dim: usize,
-    remaining: &mut HashMap<String, usize>,
-    hashed: &std::collections::BTreeMap<String, manifest::FileEntry>,
-    manifest: &mut Manifest,
-) -> Result<()> {
-    if chunks.is_empty() {
-        return Ok(());
+#[derive(Default)]
+struct WriteBatch {
+    chunks: Vec<Chunk>,
+    hashes: Vec<String>,
+    vecs: Vec<Vec<f32>>,
+}
+
+impl WriteBatch {
+    fn push(&mut self, c: &Chunk, h: &str, v: Vec<f32>) {
+        self.chunks.push(c.clone());
+        self.hashes.push(h.to_string());
+        self.vecs.push(v);
     }
-    store.add(chunks, std::mem::take(vecs), dim).await?;
-    for c in chunks.drain(..) {
-        let n = remaining.get_mut(&c.rel_path).expect("tracked");
-        *n -= 1;
-        if *n == 0 {
-            if let Some(e) = hashed.get(&c.rel_path) {
-                manifest.files.insert(c.rel_path.clone(), e.clone());
-            }
+    fn len(&self) -> usize {
+        self.chunks.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+}
+
+/// Embed a batch; on failure (typically GPU out-of-memory) split it in half,
+/// retry, and halve the token budget for the following batches.
+fn embed_split(
+    e: &mut embedder::Embedder,
+    texts: &[String],
+    budget: &std::sync::atomic::AtomicUsize,
+) -> Result<Vec<Vec<f32>>> {
+    match e.embed_documents(texts, texts.len()) {
+        Ok(v) => Ok(v),
+        Err(err) if texts.len() > 1 => {
+            let b = budget.load(Ordering::Relaxed);
+            let nb = (b / 2).max(512);
+            budget.store(nb, Ordering::Relaxed);
+            tracing::warn!("embedding batch of {} failed ({err:#}); splitting, token budget {b} -> {nb}", texts.len());
+            let mid = texts.len() / 2;
+            let mut a = embed_split(e, &texts[..mid], budget)?;
+            a.extend(embed_split(e, &texts[mid..], budget)?);
+            Ok(a)
         }
+        Err(err) => Err(err),
     }
-    Ok(())
 }
 
 async fn finish(

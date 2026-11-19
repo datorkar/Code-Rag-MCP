@@ -32,8 +32,12 @@ pub struct AppConfig {
     /// Default model for newly created indexes.
     pub active_embed_model: String,
     pub execution_provider: ExecutionProvider,
-    /// Number of chunks per ONNX inference batch.
+    /// Upper bound on chunks per ONNX batch (0 = no cap; batches are sized by
+    /// `embed_token_budget`).
     pub embed_batch_size: usize,
+    /// Approximate tokens per batch (batch size x longest chunk). 0 = auto:
+    /// 32768 on GPU, 8192 on CPU. Halved automatically on out-of-memory.
+    pub embed_token_budget: usize,
     /// Cross-encoder used to re-score hybrid results (`None` = disabled).
     #[serde(default = "default_reranker")]
     pub reranker_model: Option<String>,
@@ -56,7 +60,8 @@ impl Default for AppConfig {
         Self {
             active_embed_model: DEFAULT_EMBED_MODEL.into(),
             execution_provider: ExecutionProvider::Auto,
-            embed_batch_size: 32,
+            embed_batch_size: 0,
+            embed_token_budget: 0,
             reranker_model: Some(DEFAULT_RERANKER.into()),
             rerank_candidates: 30,
             auto_sync_max_files: 200,
@@ -168,7 +173,9 @@ impl IndexConfig {
 
     /// Settings that invalidate every stored chunk when changed.
     pub fn fingerprint(&self) -> String {
-        format!("{}|{}|{}", self.embed_model, self.chunk_size, self.chunk_overlap)
+        // `v2`: chunks table gained `text_hash` (embedding cache); older
+        // indexes are rebuilt once.
+        format!("v2|{}|{}|{}", self.embed_model, self.chunk_size, self.chunk_overlap)
     }
 }
 

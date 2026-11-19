@@ -31,6 +31,8 @@ struct GlobalSettings {
     active_embed_model: String,
     execution_provider: ExecutionProvider,
     embed_batch_size: usize,
+    #[serde(default)]
+    embed_token_budget: usize,
     reranker_model: Option<String>,
     rerank_candidates: usize,
     auto_sync_max_files: usize,
@@ -97,6 +99,7 @@ fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
         active_embed_model: c.active_embed_model.clone(),
         execution_provider: c.execution_provider,
         embed_batch_size: c.embed_batch_size,
+        embed_token_budget: c.embed_token_budget,
         reranker_model: c.reranker_model.clone(),
         rerank_candidates: c.rerank_candidates,
         auto_sync_max_files: c.auto_sync_max_files,
@@ -118,7 +121,8 @@ fn save_settings(state: State<'_, AppState>, settings: GlobalSettings) -> CmdRes
         .update_settings(|c| {
             c.active_embed_model = settings.active_embed_model.clone();
             c.execution_provider = settings.execution_provider;
-            c.embed_batch_size = settings.embed_batch_size.clamp(1, 512);
+            c.embed_batch_size = settings.embed_batch_size.min(512);
+            c.embed_token_budget = settings.embed_token_budget;
             c.reranker_model = reranker.clone();
             c.rerank_candidates = settings.rerank_candidates.clamp(5, 200);
             c.auto_sync_max_files = settings.auto_sync_max_files;
@@ -174,9 +178,9 @@ fn start_index(
                 ok: true,
                 cancelled: false,
                 message: format!(
-                    "+{} ~{} -{} files · {} chunks embedded · {} total · {:.1}s",
+                    "+{} ~{} -{} files · {} chunks embedded, {} reused · {} total · {:.1}s ({})",
                     r.files_added, r.files_modified, r.files_removed, r.chunks_embedded,
-                    r.total_chunks, r.duration_secs
+                    r.chunks_reused, r.total_chunks, r.duration_secs, r.timings
                 ),
             },
             Err(e) => FinishedEvent {

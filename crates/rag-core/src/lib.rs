@@ -3,6 +3,7 @@
 //! LanceDB hybrid (vector + BM25) search.
 
 pub mod agents_md;
+pub mod batching;
 pub mod chunker;
 pub mod config;
 pub mod embedder;
@@ -22,7 +23,7 @@ pub use config::{AppConfig, ExecutionProvider, IndexConfig};
 pub use engine::{Engine, IndexInfo, IndexStatus, SaveResult, SearchOutcome};
 pub use paths::Paths;
 pub use store::SearchHit;
-pub use sync::{Phase, Progress, ProgressFn, SyncOptions, SyncReport, SyncTooLarge};
+pub use sync::{PhaseTimings, Phase, Progress, ProgressFn, SyncOptions, SyncReport, SyncTooLarge};
 
 /// Error marker for user-requested cancellation (`err.is::<Cancelled>()`).
 #[derive(Debug, Clone, Copy, thiserror::Error)]
