@@ -1,11 +1,11 @@
-//! Advisory cross-process file locks (one per index + one for config.json).
+//! Advisory cross-process file locks (one per index + one for config.json),
+//! using the standard library's `File::lock` family (LockFileEx / flock).
 
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use fs2::FileExt;
 
 /// RAII guard; the lock is released when dropped.
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub struct FileLock {
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 
@@ -32,23 +32,25 @@ fn open(path: &Path) -> Result<File> {
 impl FileLock {
     pub fn exclusive_blocking(path: &Path) -> Result<Self> {
         let file = open(path)?;
-        file.lock_exclusive().context("acquiring exclusive lock")?;
+        file.lock().context("acquiring exclusive lock")?;
         Ok(Self { file })
     }
 
     pub fn try_exclusive(path: &Path) -> Result<Option<Self>> {
         let file = open(path)?;
-        match file.try_lock_exclusive() {
+        match file.try_lock() {
             Ok(()) => Ok(Some(Self { file })),
-            Err(_) => Ok(None),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(e)) => Err(e).context("acquiring exclusive lock"),
         }
     }
 
     pub fn try_shared(path: &Path) -> Result<Option<Self>> {
         let file = open(path)?;
-        match FileExt::try_lock_shared(&file) {
+        match file.try_lock_shared() {
             Ok(()) => Ok(Some(Self { file })),
-            Err(_) => Ok(None),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(e)) => Err(e).context("acquiring shared lock"),
         }
     }
 
@@ -77,5 +79,24 @@ impl FileLock {
             }
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_excludes_shared_and_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.lock");
+        let ex = FileLock::try_exclusive(&p).unwrap().expect("first exclusive");
+        assert!(FileLock::try_exclusive(&p).unwrap().is_none());
+        assert!(FileLock::try_shared(&p).unwrap().is_none());
+        drop(ex);
+        let s1 = FileLock::try_shared(&p).unwrap().expect("shared");
+        let _s2 = FileLock::try_shared(&p).unwrap().expect("second shared");
+        assert!(FileLock::try_exclusive(&p).unwrap().is_none());
+        drop(s1);
     }
 }

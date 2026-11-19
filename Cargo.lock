@@ -2699,16 +2699,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e2488a10218a17366ce6bd38b6d081b4387a9548d350029db9feddc9bb44d6d"
 
 [[package]]
-name = "fs2"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "fsst"
 version = "14.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6549,21 +6539,16 @@ name = "rag-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrow-array",
- "arrow-schema",
  "blake3",
  "chrono",
- "dirs 6.0.0",
+ "dirs 7.0.0",
  "fastembed",
- "fs2",
  "futures",
- "hex",
  "ignore",
  "lancedb",
  "ort",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tempfile",
  "text-splitter",
  "thiserror 2.0.21",
@@ -8888,9 +8873,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-c-sharp"
-version = "0.23.5"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1aac67f1ad71de1d6d39708d34811081c26dfa495658de6c14c34200849357c"
+checksum = "54b3cdb7aeae9018e60908aa18937708de29338c83ecf3701de534b23d365c30"
 dependencies = [
  "cc",
  "tree-sitter-language",

@@ -7,7 +7,7 @@ default-members = ["crates/rag-core", "crates/rag-mcp"]
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-rust-version = "1.90"
+rust-version = "1.94"  # lancedb 0.41 MSRV; std file locks need 1.89+
 
 [workspace.dependencies]
 rag-core = { path = "crates/rag-core" }

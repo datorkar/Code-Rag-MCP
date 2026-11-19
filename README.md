@@ -10,7 +10,7 @@ src-tauri + ui/   Tauri v2 desktop manager (React + TS + Tailwind v4)
 
 ## Build
 
-Requirements: Rust ≥ 1.90, Node 22, `protoc` (LanceDB dependency).
+Requirements: Rust ≥ 1.94, Node 22, `protoc` (LanceDB dependency).
 Windows: MSVC build tools + WebView2 (preinstalled on Win10/11).
 
 ```powershell

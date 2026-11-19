@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use arrow_array::{
-    cast::AsArray, types::Float32Type, Array, FixedSizeListArray, RecordBatch, StringArray,
+use lancedb::arrow::arrow_array::{
+    self, cast::AsArray, types::Float32Type, Array, FixedSizeListArray, RecordBatch, StringArray,
     UInt32Array,
 };
-use arrow_schema::{DataType, Field, Schema, SchemaRef};
+use lancedb::arrow::arrow_schema::{DataType, Field, Schema, SchemaRef};
 use futures::TryStreamExt;
 use lancedb::index::scalar::{FtsIndexBuilder, FullTextSearchQuery};
 use lancedb::index::Index;
