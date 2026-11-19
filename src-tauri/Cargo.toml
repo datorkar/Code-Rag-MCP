@@ -13,15 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 
-[features]
-# CUDA by default (NVIDIA). ONNX Runtime falls back to CPU if CUDA/cuDNN are missing.
-# CPU-only: --no-default-features. Non-NVIDIA Windows GPUs: --no-default-features --features directml
-default = ["cuda"]
-cuda = ["rag-core/cuda"]
-directml = ["rag-core/directml"]
 
 [dependencies]
-rag-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -31,3 +24,12 @@ tracing-subscriber.workspace = true
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
 tauri-plugin-clipboard-manager = "2.5"
+
+# ONNX Runtime flavour per platform: Windows uses Windows ML (vendor EPs via the
+# Windows ML catalog, DirectML fallback); elsewhere the bundled ORT with CUDA
+# (falls back to CPU when CUDA/cuDNN are missing).
+[target.'cfg(windows)'.dependencies]
+rag-core = { workspace = true, features = ["winml"] }
+
+[target.'cfg(not(windows))'.dependencies]
+rag-core = { workspace = true, features = ["cuda"] }

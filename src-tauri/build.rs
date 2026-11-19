@@ -31,7 +31,43 @@ fn stage_sidecar() {
     }
 }
 
+/// Windows: make sure the Windows ML runtime DLLs exist (bundled as resources)
+/// and sit next to dev binaries in target/<profile> so `tauri dev` and
+/// `cargo run -p rag-mcp` find them.
+fn stage_winml() {
+    if !std::env::var("TARGET").unwrap().contains("windows") {
+        return;
+    }
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let root = manifest.parent().unwrap();
+    let dir = manifest.join("binaries").join("winml");
+    println!("cargo:rerun-if-changed={}", dir.join(".version").display());
+    if !dir.join("onnxruntime.dll").is_file() {
+        let ok = std::process::Command::new("node")
+            .arg(root.join("scripts").join("fetch-winml.mjs"))
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            panic!("Windows ML DLLs missing; run `node scripts/fetch-winml.mjs`");
+        }
+    }
+    let profile = std::env::var("PROFILE").unwrap();
+    for out in [root.join("target").join(&profile), root.join("target").join(std::env::var("TARGET").unwrap()).join(&profile)] {
+        if !out.is_dir() {
+            continue;
+        }
+        for f in std::fs::read_dir(&dir).unwrap().flatten() {
+            let p = f.path();
+            if p.extension().is_some_and(|e| e == "dll") {
+                let _ = std::fs::copy(&p, out.join(p.file_name().unwrap()));
+            }
+        }
+    }
+}
+
 fn main() {
+    stage_winml();
     stage_sidecar();
     tauri_build::build()
 }

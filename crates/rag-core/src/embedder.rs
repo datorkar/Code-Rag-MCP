@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
-use fastembed::{EmbeddingModel, ExecutionProviderDispatch, TextEmbedding, TextInitOptions};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use serde::Serialize;
 
 use crate::config::ExecutionProvider;
@@ -103,29 +103,6 @@ pub fn model_spec(name: &str) -> Result<ModelSpec> {
     })
 }
 
-fn execution_providers(ep: ExecutionProvider) -> Vec<ExecutionProviderDispatch> {
-    #[allow(unused_mut)]
-    let mut v: Vec<ExecutionProviderDispatch> = Vec::new();
-    let want_cuda = matches!(ep, ExecutionProvider::Auto | ExecutionProvider::Cuda);
-    let want_dml = matches!(ep, ExecutionProvider::Auto | ExecutionProvider::Directml);
-    #[cfg(feature = "cuda")]
-    if want_cuda {
-        v.push(ort::ep::CUDA::default().build());
-    }
-    #[cfg(feature = "directml")]
-    if want_dml {
-        v.push(ort::ep::DirectML::default().build());
-    }
-    if v.is_empty() && !matches!(ep, ExecutionProvider::Cpu | ExecutionProvider::Auto) {
-        tracing::warn!(
-            "execution provider {ep:?} requested but this binary was built without it \
-             (cuda={want_cuda}, directml={want_dml}); using CPU"
-        );
-    }
-    // ONNX Runtime always appends the CPU provider as the final fallback.
-    v
-}
-
 /// A loaded model. `embed` is CPU/GPU-bound and synchronous; call it from
 /// `spawn_blocking`.
 pub struct Embedder {
@@ -149,11 +126,16 @@ impl Embedder {
             spec.id,
             spec.dim
         );
-        let opts = TextInitOptions::new(model.clone())
+        let (eps, policy) = crate::runtime::session_plan(ep);
+        let mut opts = TextInitOptions::new(model.clone())
+            .with_environment(crate::runtime::environment()?)
             .with_cache_dir(cache_dir.to_path_buf())
             .with_show_download_progress(false)
             .with_max_length(max_length)
-            .with_execution_providers(execution_providers(ep));
+            .with_execution_providers(eps);
+        if let Some(p) = policy {
+            opts = opts.with_auto_device(p);
+        }
         let te = TextEmbedding::try_new(opts)
             .with_context(|| format!("initialising embedding model {}", spec.id))?;
         let query_prefix = if spec.id.to_ascii_lowercase().contains("bge-") {
@@ -186,6 +168,20 @@ impl Embedder {
 
 pub type SharedEmbedder = Arc<Mutex<Embedder>>;
 
+static EMBEDDERS: OnceLock<Mutex<HashMap<String, SharedEmbedder>>> = OnceLock::new();
+static RERANKERS: OnceLock<Mutex<HashMap<String, SharedReranker>>> = OnceLock::new();
+
+/// Drop all loaded ONNX sessions (e.g. after new execution providers were
+/// installed); they are recreated lazily on next use.
+pub fn clear_caches() {
+    if let Some(c) = EMBEDDERS.get() {
+        c.lock().unwrap().clear();
+    }
+    if let Some(c) = RERANKERS.get() {
+        c.lock().unwrap().clear();
+    }
+}
+
 /// Process-wide cache so the MCP server does not reload ONNX sessions per call.
 pub fn cached(
     model_name: &str,
@@ -193,9 +189,8 @@ pub fn cached(
     cache_dir: &Path,
     max_length: usize,
 ) -> Result<SharedEmbedder> {
-    static CACHE: OnceLock<Mutex<HashMap<String, SharedEmbedder>>> = OnceLock::new();
     let key = format!("{}|{ep:?}|{max_length}", model_name.to_ascii_lowercase());
-    let cache = CACHE.get_or_init(Default::default);
+    let cache = EMBEDDERS.get_or_init(Default::default);
     if let Some(e) = cache.lock().unwrap().get(&key) {
         return Ok(e.clone());
     }
@@ -245,19 +240,23 @@ pub fn resolve_reranker(name: &str) -> Result<RerankerModel> {
 pub type SharedReranker = Arc<Mutex<TextRerank>>;
 
 pub fn cached_reranker(name: &str, ep: ExecutionProvider, cache_dir: &Path) -> Result<SharedReranker> {
-    static CACHE: OnceLock<Mutex<HashMap<String, SharedReranker>>> = OnceLock::new();
     let key = format!("{}|{ep:?}", name.to_ascii_lowercase());
-    let cache = CACHE.get_or_init(Default::default);
+    let cache = RERANKERS.get_or_init(Default::default);
     if let Some(r) = cache.lock().unwrap().get(&key) {
         return Ok(r.clone());
     }
     let model = resolve_reranker(name)?;
     tracing::info!("loading reranker {name} (ep {ep:?})");
-    let opts = RerankInitOptions::new(model)
+    let (eps, policy) = crate::runtime::session_plan(ep);
+    let mut opts = RerankInitOptions::new(model)
+        .with_environment(crate::runtime::environment()?)
         .with_cache_dir(cache_dir.to_path_buf())
         .with_show_download_progress(false)
         .with_max_length(1024)
-        .with_execution_providers(execution_providers(ep));
+        .with_execution_providers(eps);
+    if let Some(p) = policy {
+        opts = opts.with_auto_device(p);
+    }
     let r = Arc::new(Mutex::new(
         TextRerank::try_new(opts).with_context(|| format!("initialising reranker {name}"))?,
     ));

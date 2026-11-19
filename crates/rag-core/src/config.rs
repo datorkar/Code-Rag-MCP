@@ -14,9 +14,13 @@ pub const DEFAULT_RERANKER: &str = "jinaai/jina-reranker-v2-base-multilingual";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionProvider {
-    /// Try CUDA, then DirectML, then CPU (whichever this build supports).
+    /// Best available GPU (Windows ML vendor EP / DirectML / CUDA, per build), else CPU.
     #[default]
     Auto,
+    /// Any GPU (same as Auto, but logs a warning when none is usable).
+    Gpu,
+    /// NPU via Windows ML (e.g. Qualcomm QNN, Intel NPU); experimental for embeddings.
+    Npu,
     Cuda,
     Directml,
     Cpu,

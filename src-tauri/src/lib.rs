@@ -88,12 +88,11 @@ fn get_settings(state: State<'_, AppState>) -> CmdResult<GlobalSettings> {
 }
 
 fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
-    #[allow(unused_mut)]
-    let mut gpu: Vec<String> = Vec::new();
-    #[cfg(feature = "cuda")]
-    gpu.push("cuda".to_string());
-    #[cfg(feature = "directml")]
-    gpu.push("directml".to_string());
+    let gpu: Vec<String> = if cfg!(windows) {
+        vec!["winml".into(), "directml".into()]
+    } else {
+        vec!["cuda".into()]
+    };
     GlobalSettings {
         active_embed_model: c.active_embed_model.clone(),
         execution_provider: c.execution_provider,
@@ -192,6 +191,141 @@ fn start_index(
         let _ = app.emit("index-finished", ev);
     });
     Ok(())
+}
+
+#[derive(Serialize)]
+struct GpuStatus {
+    runtime: Option<rag_core::runtime::RuntimeInfo>,
+    runtime_error: Option<String>,
+    /// Windows ML catalog (Windows builds only).
+    providers: Vec<ProviderStatus>,
+    providers_error: Option<String>,
+    windows_ml: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct ProviderStatus {
+    name: String,
+    version: String,
+    ready_state: String,
+    certified: bool,
+    registered: bool,
+}
+
+#[cfg(windows)]
+#[derive(Serialize, Clone)]
+struct WinmlProgress {
+    provider: String,
+    progress: f64,
+    done: bool,
+    ok: bool,
+    message: Option<String>,
+}
+
+#[tauri::command]
+async fn gpu_status() -> CmdResult<GpuStatus> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let (runtime, runtime_error) = match rag_core::runtime::info() {
+            Ok(i) => (Some(i), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
+        };
+        #[allow(unused_mut)]
+        let (mut providers, mut providers_error) = (Vec::new(), None);
+        #[cfg(windows)]
+        match rag_core::runtime::winml_providers() {
+            Ok(list) => {
+                let reg = runtime.as_ref().map(|r| r.registered_providers.clone()).unwrap_or_default();
+                providers = list
+                    .into_iter()
+                    .map(|p| ProviderStatus {
+                        registered: reg.contains(&p.name),
+                        ready_state: serde_json::to_value(p.ready_state)
+                            .ok()
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_default(),
+                        name: p.name,
+                        version: p.version,
+                        certified: p.certified,
+                    })
+                    .collect();
+            }
+            Err(e) => providers_error = Some(format!("{e:#}")),
+        }
+        GpuStatus { runtime, runtime_error, providers, providers_error, windows_ml: cfg!(windows) }
+    })
+    .await
+    .map_err(err)
+}
+
+/// Download + register Windows ML providers (`provider = None`: every certified
+/// provider that is not ready yet). Progress: `winml-progress` events.
+#[tauri::command]
+fn winml_install(app: AppHandle, state: State<'_, AppState>, provider: Option<String>) -> CmdResult<()> {
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state, provider);
+        Err("Windows ML is only available on Windows".into())
+    }
+    #[cfg(windows)]
+    {
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut jobs = state.jobs.lock().unwrap();
+            if jobs.contains_key(WINML_JOB) {
+                return Err("a Windows ML install is already running".into());
+            }
+            jobs.insert(WINML_JOB.into(), cancel.clone());
+        }
+        tauri::async_runtime::spawn_blocking(move || {
+            let targets: Vec<String> = match &provider {
+                Some(p) => vec![p.clone()],
+                None => rag_core::runtime::winml_providers()
+                    .map(|l| {
+                        l.into_iter()
+                            .filter(|p| p.certified && p.ready_state != rag_core::winml::ReadyState::Ready)
+                            .map(|p| p.name)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            };
+            for name in targets {
+                let emit = |progress: f64, done: bool, ok: bool, message: Option<String>| {
+                    let _ = app.emit(
+                        "winml-progress",
+                        WinmlProgress { provider: name.clone(), progress, done, ok, message },
+                    );
+                };
+                emit(0.0, false, true, None);
+                let res = rag_core::runtime::install_winml_provider(&name, &cancel, &|p| emit(p, false, true, None));
+                match res {
+                    Ok(_) => emit(100.0, true, true, None),
+                    Err(e) => {
+                        let cancelled = e.is::<Cancelled>();
+                        emit(0.0, true, false, Some(if cancelled { "cancelled".into() } else { format!("{e:#}") }));
+                        if cancelled {
+                            break;
+                        }
+                    }
+                }
+            }
+            app.state::<AppState>().jobs.lock().unwrap().remove(WINML_JOB);
+        });
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+const WINML_JOB: &str = "__winml_install__";
+
+#[tauri::command]
+fn winml_cancel(state: State<'_, AppState>) -> bool {
+    #[cfg(windows)]
+    if let Some(c) = state.jobs.lock().unwrap().get(WINML_JOB) {
+        c.store(true, Ordering::Relaxed);
+        return true;
+    }
+    let _ = state;
+    false
 }
 
 #[tauri::command]
@@ -318,6 +452,9 @@ pub fn run() {
         )
         .try_init();
 
+    if let Err(e) = rag_core::runtime::init() {
+        tracing::error!("ONNX Runtime unavailable: {e:#}");
+    }
     let engine = Engine::new().expect("failed to initialise data directory");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -336,6 +473,9 @@ pub fn run() {
             claude_snippets,
             agents_snippet,
             register_claude_mcp,
+            gpu_status,
+            winml_install,
+            winml_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

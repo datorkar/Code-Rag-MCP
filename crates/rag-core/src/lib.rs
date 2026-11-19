@@ -10,10 +10,13 @@ pub mod engine;
 pub mod lock;
 pub mod manifest;
 pub mod paths;
+pub mod runtime;
 pub mod snippet;
 pub mod store;
 pub mod sync;
 pub mod walker;
+#[cfg(feature = "winml")]
+pub mod winml;
 
 pub use config::{AppConfig, ExecutionProvider, IndexConfig};
 pub use engine::{Engine, IndexInfo, IndexStatus, SaveResult, SearchOutcome};

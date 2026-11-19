@@ -1,4 +1,4 @@
-export type ExecutionProvider = "auto" | "cuda" | "directml" | "cpu";
+export type ExecutionProvider = "auto" | "gpu" | "npu" | "cuda" | "directml" | "cpu";
 export type IndexStatus = "ready" | "indexing" | "stale" | "never_indexed";
 
 export interface IndexConfig {
@@ -88,4 +88,43 @@ export interface ClaudeSnippets {
   command: string;
   json: string;
   claude_md: string;
+}
+
+export interface DeviceInfo {
+  ep: string;
+  ep_vendor: string;
+  kind: string;
+  vendor: string;
+}
+
+export interface RuntimeInfo {
+  flavour: "winml" | "bundled";
+  dll_dir: string | null;
+  registered_providers: string[];
+  devices: DeviceInfo[];
+  vendor_gpu: boolean;
+}
+
+export interface ProviderStatus {
+  name: string;
+  version: string;
+  ready_state: "ready" | "not_ready" | "not_present";
+  certified: boolean;
+  registered: boolean;
+}
+
+export interface GpuStatus {
+  runtime: RuntimeInfo | null;
+  runtime_error: string | null;
+  providers: ProviderStatus[];
+  providers_error: string | null;
+  windows_ml: boolean;
+}
+
+export interface WinmlProgress {
+  provider: string;
+  progress: number;
+  done: boolean;
+  ok: boolean;
+  message: string | null;
 }

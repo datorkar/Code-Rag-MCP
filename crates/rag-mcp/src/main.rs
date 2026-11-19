@@ -205,6 +205,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // Load ONNX Runtime (Windows ML on Windows) and register installed GPU/NPU
+    // providers. A failure is reported by the tools instead of killing the server.
+    if let Err(e) = rag_core::runtime::init() {
+        tracing::error!("ONNX Runtime unavailable: {e:#}");
+    }
     let engine = Engine::new()?;
     tracing::info!("rag-mcp starting; data dir {}", engine.paths.root().display());
     let service = RagServer::new(engine).serve(stdio()).await?;

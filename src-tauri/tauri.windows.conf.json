@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/ort/*": null,
+      "binaries/winml/*.dll": "./"
+    }
+  }
+}

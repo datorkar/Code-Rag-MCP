@@ -2,23 +2,20 @@
 //   src-tauri/binaries/rag-mcp-<triple>[.exe]   (externalBin -> next to the app exe)
 //   src-tauri/binaries/ort/*                    (ONNX Runtime GPU provider libs -> next to the app exe)
 //
-// Features: CUDA by default. Override with RAG_FEATURES, e.g.
-//   RAG_FEATURES=none      CPU only
-//   RAG_FEATURES=directml  DirectML instead of CUDA
-// The CUDA 12 vs 13 build of ONNX Runtime is auto-detected from CUDA_HOME;
-// force it with ORT_CUDA_VERSION=12|13.
+// ONNX Runtime flavour follows the platform: Windows builds use Windows ML
+// (DLLs fetched by scripts/fetch-winml.mjs), other platforms the bundled ORT
+// with CUDA (CUDA 13 binaries; CPU fallback at runtime).
 import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const feat = process.env.RAG_FEATURES;
-const featureArgs =
-  feat === "none" ? ["--no-default-features"] : feat ? ["--no-default-features", "--features", feat] : [];
 const triple =
   process.env.TAURI_ENV_TARGET_TRIPLE || execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
 const ext = triple.includes("windows") ? ".exe" : "";
 
-execSync(["cargo", "build", "--release", "-p", "rag-mcp", "--target", triple, ...featureArgs].join(" "), {
+if (triple.includes("windows")) execSync("node scripts/fetch-winml.mjs", { stdio: "inherit" });
+
+execSync(["cargo", "build", "--release", "-p", "rag-mcp", "--target", triple].join(" "), {
   stdio: "inherit",
 });
 

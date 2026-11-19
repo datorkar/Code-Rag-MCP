@@ -20,16 +20,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            ort: winml   # Windows ML (ORT 1.28 + DirectML + vendor EP catalog)
+          - os: ubuntu-latest
+            ort: bundled # static ORT + CUDA 13 EP
     runs-on: ${{ matrix.os }}
+    env:
+      LOCAL_CODE_RAG_WINML_DIR: ${{ github.workspace }}/src-tauri/binaries/winml
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p rag-core -p rag-mcp
+      - if: matrix.ort == 'winml'
+        run: node scripts/fetch-winml.mjs
+      - run: cargo test -p rag-core --features ${{ matrix.ort }} -p rag-mcp
+      # Real embedding through Windows ML's ONNX Runtime (CPU + DirectML attempt), lists the EP catalog.
+      - if: matrix.ort == 'winml'
+        run: cargo test -p rag-core --features winml --test winml_smoke -- --ignored --nocapture
       - run: cargo build --release -p rag-mcp
       - uses: actions/upload-artifact@v7
         with:

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ClaudeSnippets,
+  GpuStatus,
   GlobalSettings,
   IndexConfig,
   IndexInfo,
@@ -21,6 +22,9 @@ export const api = {
     invoke<void>("start_index", { indexId, forceFull }),
   cancelIndex: (indexId: string) => invoke<boolean>("cancel_index", { indexId }),
   agentsSnippet: (indexId: string) => invoke<string>("agents_snippet", { indexId }),
+  gpuStatus: () => invoke<GpuStatus>("gpu_status"),
+  winmlInstall: (provider: string | null) => invoke<void>("winml_install", { provider }),
+  winmlCancel: () => invoke<boolean>("winml_cancel"),
   claudeSnippets: () => invoke<ClaudeSnippets>("claude_snippets"),
   registerClaudeMcp: () => invoke<string>("register_claude_mcp"),
 };

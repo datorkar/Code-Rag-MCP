@@ -30,6 +30,27 @@ $env:RAG_FEATURES="none"; npx tauri build      # CPU-only bundle
 
 ONNX Runtime binaries are downloaded at build time by `ort`; models are downloaded from Hugging Face on first use into `<data dir>/models`.
 
+## Windows ML (branch `claude/windows-ml`)
+
+On Windows this branch uses **Windows ML** instead of a bundled ONNX Runtime + CUDA:
+
+- `onnxruntime.dll` (ORT 1.28), `Microsoft.Windows.AI.MachineLearning.dll` and `DirectML.dll` from the NuGet package `Microsoft.Windows.AI.MachineLearning` 2.5.96 ship next to the exe. `scripts/fetch-winml.mjs` downloads and checksum-verifies them; `tauri build` and the Tauri `build.rs` call it automatically. No Windows App SDK install and no CUDA is needed. Requires Windows 11 24H2+ for the vendor provider catalog; DirectML works on any Windows 11.
+- At startup the app and `rag-mcp` load that ORT (`ort` `load-dynamic`) and register every certified execution provider Windows ML has already installed (NVIDIA TensorRT-RTX, AMD, Intel OpenVINO, Qualcomm QNN, … depending on the device).
+- **GPU** button → lists the devices ORT sees and the Windows ML providers for this machine, with **Download & enable** (progress + cancel). Windows downloads and updates the providers; new ones are used immediately by the app, and by `rag-mcp` after Claude Code restarts it.
+- Execution provider setting: **Auto/GPU** → a registered vendor GPU provider via ORT's `PREFER_GPU` policy, else DirectML · **NPU** → `PREFER_NPU` (experimental for embeddings) · **DirectML** · **CPU**.
+- Linux/macOS builds are unchanged (bundled ORT, CUDA with CPU fallback).
+
+Dev/test on Windows:
+
+```powershell
+node scripts/fetch-winml.mjs
+$env:LOCAL_CODE_RAG_WINML_DIR = "$PWD\src-tauri\binaries\winml"
+cargo test -p rag-core --features winml -p rag-mcp
+cargo test -p rag-core --features winml --test winml_smoke -- --ignored --nocapture   # real embedding, lists catalog
+```
+
+rag-core needs an ORT flavour feature: `bundled` (or `cuda`) or `winml`; `rag-mcp` and the app pick it per platform.
+
 ## Data layout
 
 `%APPDATA%\local-code-rag\` (Windows) · `~/.local/share/local-code-rag/` (Linux) · override with `LOCAL_CODE_RAG_HOME`.
@@ -85,6 +106,6 @@ Each index card has an **AGENTS.md** button that generates a paste-ready paragra
 ## Tests
 
 ```
-cargo test -p rag-core                        # unit tests (walker, manifest diff, chunker, model resolution)
-cargo test -p rag-core -- --ignored           # end-to-end: downloads bge-small, indexes, searches, syncs
+cargo test -p rag-core --features bundled     # unit tests (walker, manifest diff, chunker, model resolution)
+cargo test -p rag-core --features bundled -- --ignored   # end-to-end: downloads bge-small, indexes, searches, syncs
 ```

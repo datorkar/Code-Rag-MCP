@@ -16,7 +16,9 @@ export function SettingsModal({
 }) {
   const [s, setS] = useState(initial);
   const [error, setError] = useState<string | null>(null);
-  const providers: ExecutionProvider[] = ["auto", "cuda", "directml", "cpu"];
+  const providers: ExecutionProvider[] = s.gpu_features.includes("winml")
+    ? ["auto", "gpu", "npu", "directml", "cpu"]
+    : ["auto", "cuda", "cpu"];
   const [rerankers, setRerankers] = useState<string[]>([]);
   useEffect(() => {
     api.listRerankers().then(setRerankers);

@@ -9,3 +9,4 @@ node_modules/
 !/src-tauri/binaries/ort/README.txt
 *.tmp
 tsconfig.tsbuildinfo
+/src-tauri/binaries/winml/

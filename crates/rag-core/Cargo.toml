@@ -6,10 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
+# Pick exactly one ONNX Runtime flavour:
+#  - `bundled`: ORT statically linked from prebuilt binaries (Linux/macOS, plain Windows builds)
+#  - `winml`:   ORT loaded at runtime from the Windows ML package (onnxruntime.dll next to the exe),
+#               with vendor execution providers downloaded/registered through Windows ML.
 default = []
-# ONNX Runtime GPU execution providers (CPU is always the fallback).
-cuda = ["ort/cuda", "ort/copy-dylibs"]
-directml = ["fastembed/directml", "ort/directml", "ort/copy-dylibs"]
+bundled = ["fastembed/ort-download-binaries-native-tls"]
+cuda = ["bundled", "ort/cuda", "ort/copy-dylibs"]
+winml = ["fastembed/ort-load-dynamic", "fastembed/directml", "ort/load-dynamic", "ort/directml", "ort/api-28", "dep:libloading"]
 
 [dependencies]
 anyhow.workspace = true
@@ -25,8 +29,9 @@ ignore = "0.4"
 blake3 = { version = "1", features = ["mmap"] }
 futures = "0.3"
 
-fastembed = "7.7"
-ort = { version = "=2.0.0-rc.15", default-features = false }
+fastembed = { version = "7.7", default-features = false, features = ["hf-hub-native-tls"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-24"] }
+libloading = { version = "0.9", optional = true }
 
 # Arrow types come from lancedb::arrow so versions can never diverge.
 lancedb = "0.41"

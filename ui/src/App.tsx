@@ -10,6 +10,7 @@ import { ProgressDrawer } from "./components/ProgressDrawer";
 import { ClaudeModal } from "./components/ClaudeModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { AgentsMdModal } from "./components/AgentsMdModal";
+import { GpuModal } from "./components/GpuModal";
 
 type Editing = { ix: IndexConfig; isNew: boolean } | null;
 
@@ -24,6 +25,7 @@ export default function App() {
   const [showClaude, setShowClaude] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [agentsFor, setAgentsFor] = useState<IndexInfo | null>(null);
+  const [showGpu, setShowGpu] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -110,6 +112,9 @@ export default function App() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button className="btn-ghost" onClick={() => setShowGpu(true)}>
+            GPU
+          </button>
           <button className="btn-ghost" onClick={() => setShowSettings(true)} disabled={!settings}>
             Settings
           </button>
@@ -188,6 +193,7 @@ export default function App() {
           onSave={saveIndex}
         />
       )}
+      {showGpu && <GpuModal onClose={() => setShowGpu(false)} />}
       {agentsFor && <AgentsMdModal ix={agentsFor} onClose={() => setAgentsFor(null)} />}
       {showClaude && <ClaudeModal onClose={() => setShowClaude(false)} />}
       {showSettings && settings && (
