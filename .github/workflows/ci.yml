@@ -13,10 +13,6 @@ env:
   CARGO_TERM_COLOR: always
   # Runners have no CUDA toolkit to detect. ort 2.0.0-rc.15 only ships CUDA 13 binaries.
   ORT_CUDA_VERSION: "13"
-  # Per-crate compile cache in the GitHub Actions cache: unchanged crates are
-  # reused across runs, branches and failed jobs.
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: sccache
   CARGO_INCREMENTAL: "0"
 
 jobs:
@@ -27,17 +23,24 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Linux: per-crate compile cache (sccache, GitHub Actions cache).
+      # Windows: sccache cannot handle Cargo's long rustc command lines
+      # (os error 206), so the target dir is cached by rust-cache instead.
+      SCCACHE_GHA_ENABLED: ${{ matrix.os == 'ubuntu-latest' && 'true' || 'false' }}
+      RUSTC_WRAPPER: ${{ matrix.os == 'ubuntu-latest' && 'sccache' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
-      # Registry/git downloads only; compiled artifacts live in sccache.
+      - if: matrix.os == 'ubuntu-latest'
+        uses: mozilla-actions/sccache-action@v0.0.11
+      # Linux: registry only (compiled crates live in sccache). Windows: also target/.
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-targets: false
+          cache-targets: ${{ matrix.os != 'ubuntu-latest' }}
           cache-on-failure: true
       # The workspace-hack crate must match the dependency graph (see README).
       - if: matrix.os == 'ubuntu-latest'
@@ -47,7 +50,8 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run
       - run: cargo test -p rag-core -p rag-mcp
-      - run: sccache --show-stats
+      - if: matrix.os == 'ubuntu-latest'
+        run: sccache --show-stats
 
   desktop:
     name: installer (windows)
@@ -58,10 +62,9 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      # Windows: cache the compiled target dir (sccache fails on long rustc command lines).
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-targets: false
           cache-on-failure: true
       - uses: actions/setup-node@v7
         with:
@@ -70,7 +73,6 @@ jobs:
       # Builds rag-mcp (sidecar) and the app into the same target dir, so the
       # shared dependency graph is compiled once.
       - run: npx tauri build
-      - run: sccache --show-stats
       - uses: actions/upload-artifact@v7
         with:
           name: local-code-rag-windows
