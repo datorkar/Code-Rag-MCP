@@ -77,7 +77,14 @@ fn preflight_copies() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     // Same derivation as tauri-build: OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    let target_dir = out.ancestors().nth(3).expect("target dir from OUT_DIR").to_path_buf();
+    // Same algorithm as tauri-build (works with both Cargo build-dir layouts).
+    let target_dir = out
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .and_then(|b| b.parent())
+        .expect("target dir from OUT_DIR")
+        .canonicalize()
+        .expect("canonical target dir");
     println!("cargo:warning=preflight: target dir {}", target_dir.display());
     let mut copies = vec![(
         manifest.join("binaries").join(format!("rag-mcp-{triple}.exe")),
@@ -90,14 +97,16 @@ fn preflight_copies() {
         }
     }
     for (from, to) in copies {
-        if let Err(e) = std::fs::copy(&from, &to) {
-            panic!(
-                "preflight copy failed: {} -> {}: {e} (from exists: {}, to dir exists: {})",
+        let from_c = from.canonicalize();
+        match std::fs::copy(&from, &to) {
+            Ok(_) => println!("cargo:warning=preflight ok: {} -> {}", from.display(), to.display()),
+            Err(e) => println!(
+                "cargo:warning=preflight FAILED: {} -> {}: {e} (canonical src: {:?}, dst dir exists: {})",
                 from.display(),
                 to.display(),
-                from.exists(),
+                from_c,
                 to.parent().is_some_and(|d| d.is_dir())
-            );
+            ),
         }
     }
 }
@@ -106,5 +115,13 @@ fn main() {
     stage_winml();
     preflight_copies();
     stage_sidecar();
-    tauri_build::build()
+    // Surface the full error chain + backtrace (set RUST_LIB_BACKTRACE=1) instead
+    // of tauri-build's bare one-line message.
+    if let Err(e) = tauri_build::try_build(tauri_build::Attributes::new()) {
+        for line in format!("{e:?}").lines() {
+            println!("cargo:warning=tauri-build: {line}");
+        }
+        eprintln!("{e:?}");
+        std::process::exit(1);
+    }
 }
