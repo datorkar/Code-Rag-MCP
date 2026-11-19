@@ -66,8 +66,45 @@ fn stage_winml() {
     }
 }
 
+/// Windows preflight: perform the same copies tauri-build does (sidecar +
+/// Windows ML DLL resources into the target dir) with explicit paths, so a
+/// failure reports *which* path is missing instead of a bare OS error.
+fn preflight_copies() {
+    let triple = std::env::var("TARGET").unwrap();
+    if !triple.contains("windows") {
+        return;
+    }
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    // Same derivation as tauri-build: OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let target_dir = out.ancestors().nth(3).expect("target dir from OUT_DIR").to_path_buf();
+    println!("cargo:warning=preflight: target dir {}", target_dir.display());
+    let mut copies = vec![(
+        manifest.join("binaries").join(format!("rag-mcp-{triple}.exe")),
+        target_dir.join("rag-mcp.exe"),
+    )];
+    for f in std::fs::read_dir(manifest.join("binaries").join("winml")).expect("binaries/winml").flatten() {
+        let p = f.path();
+        if p.extension().is_some_and(|e| e == "dll") {
+            copies.push((p.clone(), target_dir.join(p.file_name().unwrap())));
+        }
+    }
+    for (from, to) in copies {
+        if let Err(e) = std::fs::copy(&from, &to) {
+            panic!(
+                "preflight copy failed: {} -> {}: {e} (from exists: {}, to dir exists: {})",
+                from.display(),
+                to.display(),
+                from.exists(),
+                to.parent().is_some_and(|d| d.is_dir())
+            );
+        }
+    }
+}
+
 fn main() {
     stage_winml();
+    preflight_copies();
     stage_sidecar();
     tauri_build::build()
 }
