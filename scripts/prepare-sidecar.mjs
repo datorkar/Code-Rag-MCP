@@ -25,14 +25,21 @@ const dst = join("src-tauri", "binaries", `rag-mcp-${triple}${ext}`);
 copyFileSync(join(outDir, `rag-mcp${ext}`), dst);
 console.log(`sidecar: ${dst}`);
 
-// Provider libs (symlinks into the ort cache on Unix; resolve them). TensorRT
-// providers are skipped: they are huge and unused.
+// Bundled-ORT builds (non-Windows): CUDA provider libs (symlinks into the ort
+// cache; resolve them). TensorRT providers are skipped: huge and unused.
+// Windows ML builds ship their DLLs from src-tauri/binaries/winml instead.
 for (const f of readdirSync("src-tauri/binaries/ort")) {
   if (f !== "README.txt") rmSync(join("src-tauri/binaries/ort", f));
 }
-for (const f of readdirSync(outDir)) {
-  if (/onnxruntime_providers_(cuda|shared)\.(dll|so)$/.test(f) || /^DirectML\.dll$/i.test(f)) {
-    copyFileSync(realpathSync(join(outDir, f)), join("src-tauri/binaries/ort", f));
-    console.log(`ort lib: ${f}`);
+if (!triple.includes("windows")) {
+  for (const f of readdirSync(outDir)) {
+    if (/onnxruntime_providers_(cuda|shared)\.(dll|so)$/.test(f)) {
+      try {
+        copyFileSync(realpathSync(join(outDir, f)), join("src-tauri/binaries/ort", f));
+        console.log(`ort lib: ${f}`);
+      } catch (e) {
+        console.warn(`ort lib ${f} skipped: ${e.message}`);
+      }
+    }
   }
 }
