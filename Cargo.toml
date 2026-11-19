@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rag-core", "crates/rag-mcp"]
+members = ["crates/rag-core", "crates/rag-mcp", "src-tauri"]
 default-members = ["crates/rag-core", "crates/rag-mcp"]
 
 [workspace.package]
@@ -24,6 +24,9 @@ chrono = { version = "0.4", features = ["serde"] }
 lto = "thin"
 codegen-units = 4
 strip = true
+
+[profile.dev]
+debug = "line-tables-only"
 
 # Heavy numeric deps are painfully slow in debug; optimise them even in dev.
 [profile.dev.package."*"]

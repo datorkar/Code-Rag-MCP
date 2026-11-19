@@ -32,7 +32,8 @@ struct GlobalSettings {
     execution_provider: ExecutionProvider,
     embed_batch_size: usize,
     data_dir: String,
-    gpu_features: Vec<&'static str>,
+    #[serde(default)]
+    gpu_features: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -78,11 +79,11 @@ fn get_settings(state: State<'_, AppState>) -> CmdResult<GlobalSettings> {
 
 fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
     #[allow(unused_mut)]
-    let mut gpu = Vec::new();
+    let mut gpu: Vec<String> = Vec::new();
     #[cfg(feature = "cuda")]
-    gpu.push("cuda");
+    gpu.push("cuda".to_string());
     #[cfg(feature = "directml")]
-    gpu.push("directml");
+    gpu.push("directml".to_string());
     GlobalSettings {
         active_embed_model: c.active_embed_model.clone(),
         execution_provider: c.execution_provider,
@@ -283,7 +284,7 @@ pub fn run() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,lance=warn,lancedb=warn,ort=warn".into()),
+                .unwrap_or_else(|_| "info,lance=error,lancedb=warn,ort=warn".into()),
         )
         .try_init();
 
