@@ -13,10 +13,15 @@ env:
   CARGO_TERM_COLOR: always
   # Runners have no CUDA toolkit to detect. ort 2.0.0-rc.15 only ships CUDA 13 binaries.
   ORT_CUDA_VERSION: "13"
+  # Per-crate compile cache in the GitHub Actions cache: unchanged crates are
+  # reused across runs, branches and failed jobs.
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   core:
-    name: rag-core + rag-mcp (${{ matrix.os }})
+    name: tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -28,18 +33,24 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      # Registry/git downloads only; compiled artifacts live in sccache.
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p rag-core -p rag-mcp
-      - run: cargo build --release -p rag-mcp
-      - uses: actions/upload-artifact@v7
         with:
-          name: rag-mcp-${{ matrix.os }}
-          path: |
-            target/release/rag-mcp
-            target/release/rag-mcp.exe
+          cache-targets: false
+          cache-on-failure: true
+      # The workspace-hack crate must match the dependency graph (see README).
+      - if: matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hakari
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run
+      - run: cargo test -p rag-core -p rag-mcp
+      - run: sccache --show-stats
 
   desktop:
-    name: Tauri app (windows)
+    name: installer (windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -47,13 +58,24 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-on-failure: true
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: npm ci
+      # Builds rag-mcp (sidecar) and the app into the same target dir, so the
+      # shared dependency graph is compiled once.
       - run: npx tauri build
+      - run: sccache --show-stats
       - uses: actions/upload-artifact@v7
         with:
           name: local-code-rag-windows
           path: target/release/bundle/**
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rag-mcp-windows
+          path: target/release/rag-mcp.exe

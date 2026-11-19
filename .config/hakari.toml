@@ -1,0 +1,26 @@
+# cargo-hakari configuration: generates crates/workspace-hack so every crate in
+# the workspace builds shared dependencies with identical features (no
+# per-crate recompiles of LanceDB & co.). Regenerate after dependency changes:
+#   cargo hakari generate && cargo hakari manage-deps
+hakari-package = "workspace-hack"
+dep-format-version = "4"
+resolver = "2"
+
+# Build scripts/proc-macros (host) and normal deps share low-level crates like
+# rustix; unify both so the app and the tests do not compile separate variants.
+unify-target-host = "unify-if-both"
+
+platforms = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+
+# ONNX Runtime crates are excluded: their features (CUDA / DirectML / Windows ML
+# load-dynamic) are chosen per platform and per build on purpose and must not be
+# unified across the workspace.
+[traversal-excludes]
+third-party = [
+    { name = "ort", version = "=2.0.0-rc.15" },
+    { name = "ort-sys", version = "=2.0.0-rc.15" },
+    { name = "fastembed" },
+]

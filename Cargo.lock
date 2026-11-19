@@ -4906,6 +4906,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6559,6 +6560,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-python",
  "tree-sitter-rust",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6575,6 +6577,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -9963,6 +9966,76 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "bitflags 2.13.2",
+ "bytes",
+ "crc32fast",
+ "either",
+ "fastrand",
+ "foldhash 0.2.0",
+ "form_urlencoded",
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hashbrown 0.17.1",
+ "icu_locale_core",
+ "icu_properties",
+ "icu_provider",
+ "indexmap 2.14.2",
+ "libc",
+ "linux-raw-sys",
+ "litemap",
+ "log",
+ "memchr",
+ "once_cell",
+ "percent-encoding",
+ "petgraph",
+ "phf 0.13.1",
+ "phf_shared 0.13.1",
+ "potential_utf",
+ "proc-macro2",
+ "prost",
+ "prost-types",
+ "regex",
+ "regex-automata",
+ "regex-syntax",
+ "rustix",
+ "schemars 0.8.22",
+ "semver",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "simd-adler32",
+ "slab",
+ "smallvec",
+ "stable_deref_trait",
+ "syn 2.0.119",
+ "syn 3.0.10",
+ "tauri-utils",
+ "tempfile",
+ "time",
+ "tinystr",
+ "tokio",
+ "tokio-util",
+ "tracing-core",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+ "writeable",
+ "yoke",
+ "zerofrom",
+ "zerotrie",
+ "zerovec",
 ]
 
 [[package]]

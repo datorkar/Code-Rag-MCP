@@ -14,15 +14,18 @@ import { join } from "node:path";
 const feat = process.env.RAG_FEATURES;
 const featureArgs =
   feat === "none" ? ["--no-default-features"] : feat ? ["--no-default-features", "--features", feat] : [];
-const triple =
-  process.env.TAURI_ENV_TARGET_TRIPLE || execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
+const host = execSync("rustc -vV").toString().match(/host: (\S+)/)[1];
+const triple = process.env.TAURI_ENV_TARGET_TRIPLE || host;
+// Build into the same target dir as `tauri build` (no --target for the host)
+// so rag-mcp and the app share one compiled dependency graph.
+const targetArgs = triple === host ? [] : ["--target", triple];
 const ext = triple.includes("windows") ? ".exe" : "";
 
-execSync(["cargo", "build", "--release", "-p", "rag-mcp", "--target", triple, ...featureArgs].join(" "), {
+execSync(["cargo", "build", "--release", "-p", "rag-mcp", ...targetArgs, ...featureArgs].join(" "), {
   stdio: "inherit",
 });
 
-const outDir = join("target", triple, "release");
+const outDir = triple === host ? join("target", "release") : join("target", triple, "release");
 mkdirSync("src-tauri/binaries/ort", { recursive: true });
 const dst = join("src-tauri", "binaries", `rag-mcp-${triple}${ext}`);
 copyFileSync(join(outDir, `rag-mcp${ext}`), dst);

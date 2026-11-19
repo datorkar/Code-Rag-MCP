@@ -24,3 +24,4 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 rmcp = { version = "3.11", features = ["server", "transport-io", "macros"] }
 schemars = "1"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
