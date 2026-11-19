@@ -20,6 +20,7 @@ export const api = {
   startIndex: (indexId: string, forceFull: boolean) =>
     invoke<void>("start_index", { indexId, forceFull }),
   cancelIndex: (indexId: string) => invoke<boolean>("cancel_index", { indexId }),
+  agentsSnippet: (indexId: string) => invoke<string>("agents_snippet", { indexId }),
   claudeSnippets: () => invoke<ClaudeSnippets>("claude_snippets"),
   registerClaudeMcp: () => invoke<string>("register_claude_mcp"),
 };

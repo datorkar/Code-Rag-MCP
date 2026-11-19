@@ -269,6 +269,14 @@ fn claude_cmd(args: &[&str]) -> std::io::Result<std::process::Output> {
     }
 }
 
+/// Paste-ready AGENTS.md / CLAUDE.md paragraph for one index.
+#[tauri::command]
+fn agents_snippet(state: State<'_, AppState>, index_id: String) -> CmdResult<String> {
+    let cfg = state.engine.config().map_err(err)?;
+    let ix = cfg.index(&index_id).ok_or_else(|| format!("unknown index '{index_id}'"))?;
+    Ok(rag_core::agents_md::agents_md_snippet(ix, &cfg.indexes))
+}
+
 #[tauri::command]
 async fn register_claude_mcp() -> CmdResult<String> {
     let exe = mcp_exe_path();
@@ -326,6 +334,7 @@ pub fn run() {
             start_index,
             cancel_index,
             claude_snippets,
+            agents_snippet,
             register_claude_mcp,
         ])
         .run(tauri::generate_context!())

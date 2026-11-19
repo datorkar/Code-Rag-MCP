@@ -20,9 +20,10 @@ interface Props {
   onIndex: (force: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
+  onAgentsMd: () => void;
 }
 
-export function IndexCard({ ix, progress, onIndex, onEdit, onDelete }: Props) {
+export function IndexCard({ ix, progress, onIndex, onEdit, onDelete, onAgentsMd }: Props) {
   const status = progress ? "indexing" : ix.status;
   const busy = status === "indexing";
   const pct =
@@ -63,6 +64,9 @@ export function IndexCard({ ix, progress, onIndex, onEdit, onDelete }: Props) {
           </button>
           <button className="btn-ghost" disabled={busy} onClick={() => onIndex(true)} title="Drop all chunks and rebuild">
             Full rebuild
+          </button>
+          <button className="btn-ghost" onClick={onAgentsMd} title="Instructions to paste into the project's AGENTS.md / CLAUDE.md">
+            AGENTS.md
           </button>
           <button className="btn-ghost" onClick={onEdit}>
             Settings

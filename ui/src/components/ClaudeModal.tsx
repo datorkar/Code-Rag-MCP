@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { ClaudeSnippets } from "../types";
 import { Modal } from "./Modal";
 
-function Snippet({ title, text }: { title: string; text: string }) {
+export function Snippet({ title, text }: { title: string; text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="mb-4">

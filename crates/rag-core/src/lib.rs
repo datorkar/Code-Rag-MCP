@@ -2,6 +2,7 @@
 //! walking, blake3 manifests, tree-sitter chunking, FastEmbed embeddings and
 //! LanceDB hybrid (vector + BM25) search.
 
+pub mod agents_md;
 pub mod chunker;
 pub mod config;
 pub mod embedder;

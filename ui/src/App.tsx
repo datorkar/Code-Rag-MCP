@@ -9,6 +9,7 @@ import { IndexModal } from "./components/IndexModal";
 import { ProgressDrawer } from "./components/ProgressDrawer";
 import { ClaudeModal } from "./components/ClaudeModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { AgentsMdModal } from "./components/AgentsMdModal";
 
 type Editing = { ix: IndexConfig; isNew: boolean } | null;
 
@@ -22,6 +23,7 @@ export default function App() {
   const [editing, setEditing] = useState<Editing>(null);
   const [showClaude, setShowClaude] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [agentsFor, setAgentsFor] = useState<IndexInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -160,6 +162,7 @@ export default function App() {
                 onIndex={(force) => startIndex(ix.id, force)}
                 onEdit={() => setEditing({ ix, isNew: false })}
                 onDelete={() => deleteIndex(ix)}
+                onAgentsMd={() => setAgentsFor(ix)}
               />
             ))}
           </div>
@@ -185,6 +188,7 @@ export default function App() {
           onSave={saveIndex}
         />
       )}
+      {agentsFor && <AgentsMdModal ix={agentsFor} onClose={() => setAgentsFor(null)} />}
       {showClaude && <ClaudeModal onClose={() => setShowClaude(false)} />}
       {showSettings && settings && (
         <SettingsModal
