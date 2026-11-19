@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# A newer push to the same branch cancels the older, still-running build.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # Runners have no CUDA toolkit to detect. ort 2.0.0-rc.15 only ships CUDA 13 binaries.
