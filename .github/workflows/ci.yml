@@ -69,8 +69,6 @@ jobs:
   desktop:
     name: installer (windows)
     runs-on: windows-latest
-    env:
-      RUST_LIB_BACKTRACE: "1"   # temporary: backtrace for the tauri-build failure
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

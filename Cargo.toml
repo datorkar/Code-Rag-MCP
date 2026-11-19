@@ -25,10 +25,6 @@ lto = "thin"
 codegen-units = 4
 strip = true
 
-# Temporary: symbols in build scripts so tauri-build backtraces are readable.
-[profile.release.build-override]
-debug = true
-
 [profile.dev]
 debug = "line-tables-only"
 

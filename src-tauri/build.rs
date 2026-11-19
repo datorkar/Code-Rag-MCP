@@ -66,57 +66,11 @@ fn stage_winml() {
     }
 }
 
-/// Windows preflight: perform the same copies tauri-build does (sidecar +
-/// Windows ML DLL resources into the target dir) with explicit paths, so a
-/// failure reports *which* path is missing instead of a bare OS error.
-fn preflight_copies() {
-    let triple = std::env::var("TARGET").unwrap();
-    if !triple.contains("windows") {
-        return;
-    }
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    // Same derivation as tauri-build: OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out
-    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // Same algorithm as tauri-build (works with both Cargo build-dir layouts).
-    let target_dir = out
-        .ancestors()
-        .find(|p| p.file_name().is_some_and(|n| n == "build"))
-        .and_then(|b| b.parent())
-        .expect("target dir from OUT_DIR")
-        .canonicalize()
-        .expect("canonical target dir");
-    println!("cargo:warning=preflight: target dir {}", target_dir.display());
-    let mut copies = vec![(
-        manifest.join("binaries").join(format!("rag-mcp-{triple}.exe")),
-        target_dir.join("rag-mcp.exe"),
-    )];
-    for f in std::fs::read_dir(manifest.join("binaries").join("winml")).expect("binaries/winml").flatten() {
-        let p = f.path();
-        if p.extension().is_some_and(|e| e == "dll") {
-            copies.push((p.clone(), target_dir.join(p.file_name().unwrap())));
-        }
-    }
-    for (from, to) in copies {
-        let from_c = from.canonicalize();
-        match std::fs::copy(&from, &to) {
-            Ok(_) => println!("cargo:warning=preflight ok: {} -> {}", from.display(), to.display()),
-            Err(e) => println!(
-                "cargo:warning=preflight FAILED: {} -> {}: {e} (canonical src: {:?}, dst dir exists: {})",
-                from.display(),
-                to.display(),
-                from_c,
-                to.parent().is_some_and(|d| d.is_dir())
-            ),
-        }
-    }
-}
-
 fn main() {
     stage_winml();
-    preflight_copies();
     stage_sidecar();
-    // Surface the full error chain + backtrace (set RUST_LIB_BACKTRACE=1) instead
-    // of tauri-build's bare one-line message.
+    // Print the full error chain (and backtrace when RUST_LIB_BACKTRACE=1)
+    // instead of tauri-build's bare one-line message.
     if let Err(e) = tauri_build::try_build(tauri_build::Attributes::new()) {
         for line in format!("{e:?}").lines() {
             println!("cargo:warning=tauri-build: {line}");
