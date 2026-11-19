@@ -6,8 +6,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Runners have no CUDA toolkit to detect; pick the ONNX Runtime CUDA build explicitly.
-  ORT_CUDA_VERSION: "12"
+  # Runners have no CUDA toolkit to detect. ort 2.0.0-rc.15 only ships CUDA 13 binaries.
+  ORT_CUDA_VERSION: "13"
 
 jobs:
   core:

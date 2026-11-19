@@ -10,10 +10,9 @@ use rag_core::{Engine, IndexConfig, Paths, Phase, SyncOptions};
 async fn index_search_and_incremental_sync() {
     let data = tempfile::tempdir().unwrap();
     let src = tempfile::tempdir().unwrap();
-    let models = std::env::var("RAG_TEST_MODELS").ok();
     let engine = Engine::with_paths(Paths::at(data.path()).unwrap());
     #[cfg(unix)]
-    if let Some(m) = models {
+    if let Ok(m) = std::env::var("RAG_TEST_MODELS") {
         // Reuse a model cache across test runs.
         std::fs::remove_dir_all(engine.paths.models_dir()).ok();
         std::os::unix::fs::symlink(m, engine.paths.models_dir()).unwrap();

@@ -26,7 +26,7 @@ npx tauri build                     # installer in target/release/bundle
 $env:RAG_FEATURES="none"; npx tauri build      # CPU-only bundle
 ```
 
-**CUDA:** the user's machine needs the NVIDIA CUDA runtime + cuDNN 9 on `PATH` (not bundled, ~1 GB). The ONNX Runtime CUDA 12 vs 13 build is chosen at compile time from `CUDA_HOME` (`...\CUDA\v12.x` → 12); force it with `ORT_CUDA_VERSION=12` or `13`. The GUI's chunks/sec readout shows whether the GPU is actually used (CPU is ~10–30x slower).
+**CUDA:** the user's machine needs the **CUDA 13** runtime + **cuDNN 9 (for CUDA 13)** on `PATH` (not bundled, ~1 GB) and a recent NVIDIA driver. The pinned ONNX Runtime (`ort 2.0.0-rc.15`) only ships CUDA 13 prebuilt binaries; with CUDA 12 installed it silently runs on CPU. The GUI's chunks/sec readout shows whether the GPU is actually used (CPU is ~10–30x slower).
 
 ONNX Runtime binaries are downloaded at build time by `ort`; models are downloaded from Hugging Face on first use into `<data dir>/models`.
 
