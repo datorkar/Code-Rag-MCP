@@ -109,6 +109,35 @@ export function SettingsModal({
           </p>
         </div>
         <div>
+          <label className="label">Resource use while indexing</label>
+          <div className="flex gap-1">
+            {(
+              [
+                ["auto", "Auto"],
+                ["low", "Low (laptop)"],
+                ["max", "Max"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                className={`btn flex-1 justify-center ${s.resource_mode === v ? "bg-indigo-600 text-white" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
+                onClick={() => setS({ ...s, resource_mode: v })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            {
+              {
+                auto: "Below-normal priority. Integrated GPUs and CPU-only machines use Low automatically; discrete GPUs run at full speed.",
+                low: "Below-normal priority, all CPU threads but 2, one worker, small batches. Keeps laptops responsive.",
+                max: "Normal priority, all cores, 2 GPU workers, large batches. Fastest; the PC may feel sluggish.",
+              }[s.resource_mode]
+            }
+          </p>
+        </div>
+        <div>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"

@@ -120,7 +120,7 @@ impl Embedder {
         cache_dir: &Path,
         max_length: usize,
     ) -> Result<Self> {
-        Self::load_with(model_name, ep, cache_dir, max_length, ModelVariant::Fp32)
+        Self::load_with(model_name, ep, cache_dir, max_length, ModelVariant::Fp32, None)
     }
 
     /// Load a specific ONNX variant (FP16 / INT8 file of the model repo);
@@ -131,6 +131,7 @@ impl Embedder {
         cache_dir: &Path,
         max_length: usize,
         variant: ModelVariant,
+        threads: Option<usize>,
     ) -> Result<Self> {
         let model = resolve_model(model_name)?;
         let spec = model_spec(model_name)?;
@@ -150,8 +151,11 @@ impl Embedder {
         if let Some(p) = policy {
             opts = opts.with_auto_device(p);
         }
+        if let Some(t) = threads {
+            opts = opts.with_intra_threads(t);
+        }
         let variant_model = match variant.onnx_file() {
-            Some(file) => match load_variant_embedder(&model, file, ep, cache_dir, max_length) {
+            Some(file) => match load_variant_embedder(&model, file, ep, cache_dir, max_length, threads) {
                 Ok(te) => {
                     tracing::info!("using {variant:?} variant of {}", spec.id);
                     Some(te)
@@ -220,8 +224,9 @@ pub fn cached(
     cache_dir: &Path,
     max_length: usize,
     variant: ModelVariant,
+    threads: Option<usize>,
 ) -> Result<SharedEmbedder> {
-    cached_worker(model_name, ep, cache_dir, max_length, variant, 0)
+    cached_worker(model_name, ep, cache_dir, max_length, variant, threads, 0)
 }
 
 /// Like [`cached`], but `worker` selects an independent session of the same
@@ -232,14 +237,15 @@ pub fn cached_worker(
     cache_dir: &Path,
     max_length: usize,
     variant: ModelVariant,
+    threads: Option<usize>,
     worker: usize,
 ) -> Result<SharedEmbedder> {
-    let key = format!("{}|{ep:?}|{max_length}|{variant:?}|w{worker}", model_name.to_ascii_lowercase());
+    let key = format!("{}|{ep:?}|{max_length}|{variant:?}|t{threads:?}|w{worker}", model_name.to_ascii_lowercase());
     let cache = EMBEDDERS.get_or_init(Default::default);
     if let Some(e) = cache.lock().unwrap().get(&key) {
         return Ok(e.clone());
     }
-    let e = Arc::new(Mutex::new(Embedder::load_with(model_name, ep, cache_dir, max_length, variant)?));
+    let e = Arc::new(Mutex::new(Embedder::load_with(model_name, ep, cache_dir, max_length, variant, threads)?));
     cache.lock().unwrap().insert(key, e.clone());
     Ok(e)
 }
@@ -357,6 +363,7 @@ fn load_variant_embedder(
     ep: ExecutionProvider,
     cache_dir: &Path,
     max_length: usize,
+    threads: Option<usize>,
 ) -> Result<TextEmbedding> {
     let info = TextEmbedding::get_model_info(model)?;
     let repo = info.model_code.clone();
@@ -372,6 +379,9 @@ fn load_variant_embedder(
         .with_execution_providers(eps);
     if let Some(p) = policy {
         opts = opts.with_auto_device(p);
+    }
+    if let Some(t) = threads {
+        opts = opts.with_intra_threads(t);
     }
     Ok(TextEmbedding::try_new_from_user_defined(user, opts)?)
 }

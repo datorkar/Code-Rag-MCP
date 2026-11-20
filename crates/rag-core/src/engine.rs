@@ -204,7 +204,8 @@ impl Engine {
             let (model, ep, dir) = (ix.embed_model.clone(), app.execution_provider, self.paths.models_dir());
             let max_len = embedder::max_length_for_chunk_size(ix.chunk_size);
             let variant = ix.model_variant(&app);
-            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, variant)).await??
+            let threads = app.intra_threads();
+            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, variant, threads)).await??
         };
         let q = query.to_string();
         let vector = tokio::task::spawn_blocking(move || emb.lock().unwrap().embed_query(&q)).await??;

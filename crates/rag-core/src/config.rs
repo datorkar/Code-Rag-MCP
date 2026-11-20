@@ -40,6 +40,21 @@ pub enum Precision {
     Int8,
 }
 
+/// How hard indexing may use the machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceMode {
+    /// Below-normal priority; Low on CPU-only machines and integrated GPUs,
+    /// full speed on discrete GPUs.
+    #[default]
+    Auto,
+    /// Normal priority, all cores, 2 GPU workers, big batches.
+    Max,
+    /// Below-normal priority, all logical threads but 2 (one physical core
+    /// free), 1 worker, small batches. Keeps laptops responsive.
+    Low,
+}
+
 /// The ONNX file actually loaded for a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,6 +90,8 @@ pub struct AppConfig {
     /// Parallel embedding sessions (0 = auto: 2 on GPU, 1 on CPU). Two sessions
     /// keep the GPU busy while the other one tokenizes on the CPU.
     pub embed_workers: usize,
+    /// Machine load while indexing (see [`ResourceMode`]).
+    pub resource_mode: ResourceMode,
     /// Troubleshooting: never use the FP16 models on GPU (e.g. GPUs with slow
     /// FP16 such as GTX 10-series, or driver issues). `LOCAL_CODE_RAG_FP16=0|1`
     /// overrides this.
@@ -104,6 +121,7 @@ impl Default for AppConfig {
             embed_batch_size: 0,
             embed_token_budget: 0,
             embed_workers: 0,
+            resource_mode: ResourceMode::Auto,
             force_fp32: false,
             reranker_model: Some(DEFAULT_RERANKER.into()),
             rerank_candidates: 30,
@@ -285,6 +303,28 @@ impl AppConfig {
             _ => !self.force_fp32,
         };
         wanted && self.execution_provider != ExecutionProvider::Cpu && crate::runtime::gpu_available()
+    }
+
+    /// Whether indexing should hold back (Low mode, or Auto on CPU-only /
+    /// integrated-GPU machines).
+    pub fn low_impact(&self) -> bool {
+        match self.resource_mode {
+            ResourceMode::Max => false,
+            ResourceMode::Low => true,
+            ResourceMode::Auto => {
+                self.execution_provider == ExecutionProvider::Cpu
+                    || !crate::runtime::gpu_available()
+                    || crate::runtime::integrated_gpu_only()
+            }
+        }
+    }
+
+    /// ONNX Runtime intra-op threads: all logical threads but 2 in low-impact
+    /// mode (leaves one physical core free on SMT CPUs); `None` = ORT default.
+    pub fn intra_threads(&self) -> Option<usize> {
+        self.low_impact().then(|| {
+            std::thread::available_parallelism().map(|n| n.get().saturating_sub(2).max(1)).unwrap_or(1)
+        })
     }
 
     pub fn index(&self, id: &str) -> Option<&IndexConfig> {

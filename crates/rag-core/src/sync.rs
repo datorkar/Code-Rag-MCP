@@ -88,6 +88,8 @@ pub struct PhaseTimings {
     pub embed: f64,
     pub write: f64,
     pub index: f64,
+    /// Index phase split: compaction, keyword index, path index, cleanup.
+    pub index_steps: [f64; 4],
 }
 
 impl std::fmt::Display for PhaseTimings {
@@ -96,7 +98,12 @@ impl std::fmt::Display for PhaseTimings {
             f,
             "scan {:.1}s · chunk {:.1}s · model {:.1}s · embed {:.1}s · write {:.1}s · index {:.1}s",
             self.scan, self.chunk, self.load_model, self.embed, self.write, self.index
-        )
+        )?;
+        let [c, k, p, u] = self.index_steps;
+        if c + k + p + u > 0.0 {
+            write!(f, " [compact {c:.1}s · keyword {k:.1}s · path {p:.1}s · cleanup {u:.1}s]")?;
+        }
+        Ok(())
     }
 }
 
@@ -184,6 +191,8 @@ pub async fn sync_index(paths: &Paths, index_id: &str, opts: SyncOptions) -> Res
         cb: opts.progress.clone(),
         last_emit: Instant::now(),
     };
+    let _priority = (AppConfig::load(paths).map(|c| c.resource_mode != crate::config::ResourceMode::Max).unwrap_or(true))
+        .then(crate::runtime::BackgroundPriority::enter);
     let result = sync_inner(paths, index_id, &opts, &mut rep).await;
     match &result {
         Ok(r) => rep.phase(
@@ -315,7 +324,7 @@ async fn sync_inner(
     if diff.is_empty() {
         if !store.has_fts_index().await && store.count().await? > 0 {
             rep.phase(Phase::BuildingIndex, "building full-text index".to_string());
-            store
+            let _ = store
                 .rebuild_indices(&mut |step, steps, label| {
                     rep.p.index_step = step;
                     rep.p.index_steps = steps;
@@ -472,8 +481,10 @@ async fn sync_inner(
         let t_model = Instant::now();
         rep.phase(Phase::LoadingModel, format!("loading {}", spec.id));
         let gpu = !matches!(app.execution_provider, crate::ExecutionProvider::Cpu);
+        let low = app.low_impact();
+        let threads = app.intra_threads();
         let n_workers = match app.embed_workers {
-            0 if gpu => crate::batching::GPU_WORKERS,
+            0 if gpu && !low => crate::batching::GPU_WORKERS,
             0 => 1,
             n => n.min(8),
         };
@@ -482,17 +493,19 @@ async fn sync_inner(
             let (model, ep, dir) = (cfg.embed_model.clone(), app.execution_provider, paths.models_dir());
             let variant = cfg.model_variant(&app);
             workers.push(
-                tokio::task::spawn_blocking(move || embedder::cached_worker(&model, ep, &dir, max_len, variant, w))
+                tokio::task::spawn_blocking(move || embedder::cached_worker(&model, ep, &dir, max_len, variant, threads, w))
                     .await??,
             );
         }
         report.timings.load_model = t_model.elapsed().as_secs_f64();
 
-        let budget = Arc::new(std::sync::atomic::AtomicUsize::new(match app.embed_token_budget {
-            0 if gpu => crate::batching::GPU_TOKEN_BUDGET,
+        // The budget is the total across workers: each in-flight batch gets its share.
+        let total_budget = match app.embed_token_budget {
+            0 if gpu && !low => crate::batching::GPU_TOKEN_BUDGET,
             0 => crate::batching::CPU_TOKEN_BUDGET,
             n => n,
-        }));
+        };
+        let budget = Arc::new(std::sync::atomic::AtomicUsize::new((total_budget / n_workers).max(512)));
         let reused_msg = (report.chunks_reused > 0).then(|| format!("{} chunks reused", report.chunks_reused));
         rep.phase(Phase::Embedding, reused_msg);
         rep.embed_start = Some(Instant::now());
@@ -553,7 +566,7 @@ async fn sync_inner(
 
     rep.phase(Phase::BuildingIndex, "updating indexes".to_string());
     let t_index = Instant::now();
-    store
+    report.timings.index_steps = store
         .update_indices(chunks.len() + to_delete.len(), &mut |step, steps, label| {
             rep.p.index_step = step;
             rep.p.index_steps = steps;

@@ -6246,6 +6246,7 @@ dependencies = [
  "lancedb",
  "libloading 0.9.1",
  "ort",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",
@@ -6258,7 +6259,9 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-python",
  "tree-sitter-rust",
+ "windows-sys 0.61.2",
  "workspace-hack",
+ "zstd 0.13.5",
 ]
 
 [[package]]

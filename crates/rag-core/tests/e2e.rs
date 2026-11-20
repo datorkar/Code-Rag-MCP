@@ -148,8 +148,8 @@ fn fp16_variant_matches_fp32() {
         "fn chunk_text(rel_path: &str, text: &str) -> Vec<Chunk> { todo!() }".to_string(),
     ];
     use rag_core::ModelVariant;
-    let mut a = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, ModelVariant::Fp32).unwrap();
-    let mut b = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, ModelVariant::Fp16).unwrap();
+    let mut a = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, ModelVariant::Fp32, None).unwrap();
+    let mut b = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, ModelVariant::Fp16, None).unwrap();
     assert!(a.variant == ModelVariant::Fp32 && b.variant == ModelVariant::Fp16, "FP16 variant actually loaded");
     let (va, vb) = (a.embed_documents(&texts, 2).unwrap(), b.embed_documents(&texts, 2).unwrap());
     for (x, y) in va.iter().zip(&vb) {

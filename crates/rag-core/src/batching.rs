@@ -13,16 +13,23 @@ pub fn est_tokens(chars: usize, max_len: usize) -> usize {
     (chars / 3 + 8).min(max_len).max(1)
 }
 
+/// Attention memory grows with batch x length^2: this caps it relative to the
+/// token budget (a batch of `budget` tokens at this length hits both limits).
+pub const ATTN_REF_LEN: usize = 512;
+
 /// End (exclusive) of the batch starting at `start`: grows while
-/// `batch_len x longest_chunk` stays within `budget`. Works for any order
-/// (the app sorts longest-first). Always >= start+1.
+/// `batch_len x longest` stays within `budget` **and**
+/// `batch_len x longest^2` stays within `budget x ATTN_REF_LEN` (so batches of
+/// long chunks shrink quadratically). Works for any order. Always >= start+1.
 pub fn next_batch_end(tokens: &[usize], start: usize, budget: usize, max_batch: usize) -> usize {
     let max_batch = if max_batch == 0 { usize::MAX } else { max_batch };
+    let attn_budget = budget.saturating_mul(ATTN_REF_LEN);
     let mut longest = tokens[start];
     let mut end = start + 1;
     while end < tokens.len() && end - start < max_batch {
         let l = longest.max(tokens[end]);
-        if (end - start + 1) * l > budget {
+        let n = end - start + 1;
+        if n * l > budget || n.saturating_mul(l).saturating_mul(l) > attn_budget {
             break;
         }
         longest = l;
@@ -43,6 +50,7 @@ pub fn plan_batches(tokens: &[usize], budget: usize, max_batch: usize) -> Vec<Ra
     out
 }
 
+/// Total tokens in flight across all workers on GPU (split between them).
 pub const GPU_TOKEN_BUDGET: usize = 65_536;
 pub const CPU_TOKEN_BUDGET: usize = 8_192;
 
@@ -56,8 +64,9 @@ mod tests {
         t.extend(vec![1000; 40]);
         let b = plan_batches(&t, 32_768, 0);
         assert_eq!(b[0], 0..300); // 300 short chunks fit in one batch (300*100 <= 32768)
-        // long chunks: 32 per batch
-        assert!(b[1..].iter().all(|r| r.len() <= 32));
+        // long chunks (1000 tokens, past the 512 reference length): quadratic cap
+        // -> 32768*512 / 1000^2 = 16 per batch
+        assert!(b[1..].iter().all(|r| r.len() <= 16));
         assert_eq!(b.iter().map(|r| r.len()).sum::<usize>(), 340);
         // cap respected
         assert!(plan_batches(&t, 32_768, 16).iter().all(|r| r.len() <= 16));
@@ -65,9 +74,8 @@ mod tests {
         let mut d = t.clone();
         d.reverse();
         let bd = plan_batches(&d, 32_768, 0);
-        assert!(bd[..bd.len() - 1].iter().all(|r| r.len() <= 32));
+        assert!(bd[..bd.len() - 1].iter().all(|r| r.len() <= 16));
         assert_eq!(bd.iter().map(|r| r.len()).sum::<usize>(), 340);
-        assert_eq!(bd.last().unwrap().len(), 276); // 8 leftover long chunks share a batch with 24 short ones
         // a single over-budget chunk still forms its own batch
         assert_eq!(plan_batches(&[50_000], 32_768, 0), vec![0..1]);
         assert!(plan_batches(&[], 10, 0).is_empty());

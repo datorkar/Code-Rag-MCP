@@ -19,7 +19,7 @@ pub mod walker;
 #[cfg(feature = "winml")]
 pub mod winml;
 
-pub use config::{AppConfig, ExecutionProvider, IndexConfig, ModelVariant, Precision};
+pub use config::{AppConfig, ExecutionProvider, IndexConfig, ModelVariant, Precision, ResourceMode};
 pub use engine::{Engine, IndexInfo, IndexStatus, SaveResult, SearchOutcome};
 pub use paths::Paths;
 pub use store::SearchHit;

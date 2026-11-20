@@ -230,6 +230,57 @@ pub fn gpu_available() -> bool {
     }
 }
 
+/// True when every GPU found is an integrated one (Intel iGPU / APU). These
+/// share RAM with the system and drive the display, so heavy batches freeze
+/// the desktop. Only Windows ML builds can tell.
+pub fn integrated_gpu_only() -> bool {
+    #[cfg(feature = "winml")]
+    {
+        let Ok(i) = info() else { return false };
+        let gpus: Vec<_> = i.devices.iter().filter(|d| d.kind == "gpu").collect();
+        !gpus.is_empty() && gpus.iter().all(|d| d.vendor.to_ascii_lowercase().contains("intel"))
+    }
+    #[cfg(not(feature = "winml"))]
+    {
+        false
+    }
+}
+
+/// Lowers the process priority to below-normal while at least one guard is
+/// alive (Windows; no-op elsewhere). Nested/concurrent syncs share it.
+pub struct BackgroundPriority(());
+
+static BG_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+impl BackgroundPriority {
+    pub fn enter() -> Self {
+        if BG_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            set_background(true);
+        }
+        Self(())
+    }
+}
+
+impl Drop for BackgroundPriority {
+    fn drop(&mut self) {
+        if BG_COUNT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            set_background(false);
+        }
+    }
+}
+
+fn set_background(on: bool) {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+        };
+        SetPriorityClass(GetCurrentProcess(), if on { BELOW_NORMAL_PRIORITY_CLASS } else { NORMAL_PRIORITY_CLASS });
+    }
+    #[cfg(not(windows))]
+    let _ = on;
+}
+
 fn is_builtin_ep(ep: &str) -> bool {
     matches!(ep, "CPUExecutionProvider" | "DmlExecutionProvider")
 }
