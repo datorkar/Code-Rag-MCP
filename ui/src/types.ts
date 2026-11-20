@@ -1,4 +1,5 @@
 export type ExecutionProvider = "auto" | "gpu" | "npu" | "cuda" | "directml" | "cpu";
+export type Precision = "auto" | "fp32" | "fp16" | "int8";
 export type IndexStatus = "ready" | "indexing" | "stale" | "never_indexed";
 
 export interface IndexConfig {
@@ -12,6 +13,7 @@ export interface IndexConfig {
   chunk_size: number;
   chunk_overlap: number;
   max_file_bytes: number;
+  precision: Precision;
   auto_update_on_search: boolean;
   auto_update_cooldown_hours: number;
   last_indexed_at: string | null;

@@ -203,8 +203,8 @@ impl Engine {
         let emb = {
             let (model, ep, dir) = (ix.embed_model.clone(), app.execution_provider, self.paths.models_dir());
             let max_len = embedder::max_length_for_chunk_size(ix.chunk_size);
-            let fp16 = app.fp16_enabled();
-            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, fp16)).await??
+            let variant = ix.model_variant(&app);
+            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, variant)).await??
         };
         let q = query.to_string();
         let vector = tokio::task::spawn_blocking(move || emb.lock().unwrap().embed_query(&q)).await??;

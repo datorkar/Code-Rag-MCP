@@ -26,6 +26,41 @@ pub enum ExecutionProvider {
     Cpu,
 }
 
+/// Per-index model precision (which ONNX variant of the embedding model).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Precision {
+    /// FP16 on GPU when the global "half precision" setting is on, else FP32.
+    #[default]
+    Auto,
+    Fp32,
+    /// Same results as FP32; faster on GPU, ignored (FP32) on CPU.
+    Fp16,
+    /// Dynamically quantized INT8 (`model_quantized.onnx`): ~1.4x faster on
+    /// CPU, ~10% of top results differ from FP32. Best on CPU.
+    Int8,
+}
+
+/// The ONNX file actually loaded for a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelVariant {
+    Fp32,
+    Fp16,
+    Int8,
+}
+
+impl ModelVariant {
+    /// Repo file for the variant (`None` = the model's default FP32 file).
+    pub fn onnx_file(self) -> Option<&'static str> {
+        match self {
+            ModelVariant::Fp32 => None,
+            ModelVariant::Fp16 => Some("onnx/model_fp16.onnx"),
+            ModelVariant::Int8 => Some("onnx/model_quantized.onnx"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -91,6 +126,8 @@ pub struct IndexConfig {
     pub chunk_overlap: usize,
     /// Files larger than this are skipped (generated code, amalgamations, ...).
     pub max_file_bytes: u64,
+    /// Embedding model precision for this index (see [`Precision`]).
+    pub precision: Precision,
     pub auto_update_on_search: bool,
     pub auto_update_cooldown_hours: f64,
     pub last_indexed_at: Option<DateTime<Utc>>,
@@ -110,6 +147,7 @@ impl Default for IndexConfig {
             chunk_size: 2000,
             chunk_overlap: 200,
             max_file_bytes: 2 * 1024 * 1024,
+            precision: Precision::Auto,
             auto_update_on_search: true,
             auto_update_cooldown_hours: 24.0,
             last_indexed_at: None,
@@ -165,6 +203,17 @@ impl IndexConfig {
         Ok(())
     }
 
+    /// The model file to load for this index under the given app settings.
+    pub fn model_variant(&self, app: &AppConfig) -> ModelVariant {
+        let gpu = app.execution_provider != ExecutionProvider::Cpu;
+        match self.precision {
+            Precision::Int8 => ModelVariant::Int8,
+            Precision::Fp16 if gpu => ModelVariant::Fp16,
+            Precision::Auto if app.fp16_enabled() => ModelVariant::Fp16,
+            _ => ModelVariant::Fp32,
+        }
+    }
+
     /// True if the index has never been built or is older than the cooldown.
     pub fn is_stale(&self, now: DateTime<Utc>) -> bool {
         match self.last_indexed_at {
@@ -180,7 +229,10 @@ impl IndexConfig {
     pub fn fingerprint(&self) -> String {
         // `v2`: chunks table gained `text_hash` (embedding cache); older
         // indexes are rebuilt once.
-        format!("v2|{}|{}|{}", self.embed_model, self.chunk_size, self.chunk_overlap)
+        // FP32 and FP16 produce the same vectors, so only INT8 is a separate
+        // class (switching to/from it rebuilds the index).
+        let class = if self.precision == Precision::Int8 { "|int8" } else { "" };
+        format!("v2|{}|{}|{}{class}", self.embed_model, self.chunk_size, self.chunk_overlap)
     }
 }
 
@@ -254,5 +306,36 @@ mod tests {
         assert_eq!(c.auto_sync_max_files, 200);
         let c: AppConfig = serde_json::from_str(r#"{"reranker_model":null}"#).unwrap();
         assert_eq!(c.reranker_model, None, "explicit null disables");
+    }
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_only_changes_for_int8() {
+        let mut ix = IndexConfig { id: "a".into(), root_path: "x".into(), ..Default::default() };
+        let base = ix.fingerprint();
+        ix.precision = Precision::Fp16;
+        assert_eq!(ix.fingerprint(), base, "fp16 is interchangeable with fp32");
+        ix.precision = Precision::Int8;
+        assert_ne!(ix.fingerprint(), base, "int8 needs a rebuild");
+    }
+
+    #[test]
+    fn variant_selection() {
+        let mut app = AppConfig { execution_provider: ExecutionProvider::Cpu, ..Default::default() };
+        let mut ix = IndexConfig { precision: Precision::Fp16, ..Default::default() };
+        assert_eq!(ix.model_variant(&app), ModelVariant::Fp32, "fp16 ignored on CPU");
+        app.execution_provider = ExecutionProvider::Gpu;
+        assert_eq!(ix.model_variant(&app), ModelVariant::Fp16);
+        ix.precision = Precision::Int8;
+        assert_eq!(ix.model_variant(&app), ModelVariant::Int8);
+        ix.precision = Precision::Auto;
+        app.half_precision = true;
+        assert_eq!(ix.model_variant(&app), ModelVariant::Fp16);
+        app.half_precision = false;
+        assert_eq!(ix.model_variant(&app), ModelVariant::Fp32);
     }
 }

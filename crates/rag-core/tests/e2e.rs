@@ -145,13 +145,55 @@ fn fp16_variant_matches_fp32() {
         "void UHealthComponent::ApplyDamage(float Amount) { Health -= Amount; }".to_string(),
         "fn chunk_text(rel_path: &str, text: &str) -> Vec<Chunk> { todo!() }".to_string(),
     ];
-    let mut a = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, false).unwrap();
-    let mut b = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, true).unwrap();
-    assert!(!a.fp16 && b.fp16, "FP16 variant actually loaded");
+    use rag_core::ModelVariant;
+    let mut a = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, ModelVariant::Fp32).unwrap();
+    let mut b = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, ModelVariant::Fp16).unwrap();
+    assert!(a.variant == ModelVariant::Fp32 && b.variant == ModelVariant::Fp16, "FP16 variant actually loaded");
     let (va, vb) = (a.embed_documents(&texts, 2).unwrap(), b.embed_documents(&texts, 2).unwrap());
     for (x, y) in va.iter().zip(&vb) {
         let cos: f32 = x.iter().zip(y).map(|(p, q)| p * q).sum::<f32>()
             / (x.iter().map(|p| p * p).sum::<f32>().sqrt() * y.iter().map(|q| q * q).sum::<f32>().sqrt());
         assert!(cos > 0.999, "fp16 vs fp32 cosine {cos}");
     }
+}
+
+/// INT8 index: builds with the quantized model, search still finds the right file,
+/// and switching precision to INT8 marks the index for a full rebuild.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn int8_index_builds_and_searches() {
+    use rag_core::{ModelVariant, Precision};
+    let data = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    let engine = Engine::with_paths(Paths::at(data.path()).unwrap());
+    #[cfg(unix)]
+    if let Ok(m) = std::env::var("RAG_TEST_MODELS") {
+        std::fs::remove_dir_all(engine.paths.models_dir()).ok();
+        std::os::unix::fs::symlink(m, engine.paths.models_dir()).unwrap();
+    }
+    engine.update_settings(|c| c.reranker_model = None).unwrap();
+    std::fs::write(src.path().join("Health.cpp"), "void UHealthComponent::ApplyDamage(float Amount)\n{\n    Health -= Amount;\n    if (Health <= 0.f) Die();\n}\n").unwrap();
+    std::fs::write(src.path().join("Inventory.cpp"), "void UInventory::AddItem(const FItem& Item)\n{\n    Items.Add(Item);\n}\n").unwrap();
+    let mut ix = IndexConfig {
+        id: "q".into(),
+        name: "q".into(),
+        root_path: src.path().to_string_lossy().into(),
+        embed_model: "BAAI/bge-small-en-v1.5".into(),
+        allowed_extensions: vec![".cpp".into()],
+        chunk_size: 400,
+        chunk_overlap: 40,
+        ..Default::default()
+    };
+    engine.save_index(ix.clone(), None).unwrap();
+    engine.sync("q", SyncOptions::default()).await.unwrap();
+
+    ix.precision = Precision::Int8;
+    let saved = engine.save_index(ix, Some("q")).unwrap();
+    assert!(saved.needs_rebuild, "switching to INT8 requires a rebuild");
+    let r = engine.sync("q", SyncOptions::default()).await.unwrap();
+    assert!(r.full_rebuild && r.files_added == 2, "{r:?}");
+    let app = engine.config().unwrap();
+    assert_eq!(app.index("q").unwrap().model_variant(&app), ModelVariant::Int8);
+    let out = engine.search("q", "take damage and die", 1, false).await.unwrap();
+    assert_eq!(out.hits[0].path, "Health.cpp", "{:#?}", out.hits);
 }

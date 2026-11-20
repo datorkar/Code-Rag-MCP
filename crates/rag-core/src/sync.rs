@@ -436,8 +436,8 @@ async fn sync_inner(
         rep.phase(Phase::LoadingModel, format!("loading {}", spec.id));
         let emb = {
             let (model, ep, dir) = (cfg.embed_model.clone(), app.execution_provider, paths.models_dir());
-            let fp16 = app.fp16_enabled();
-            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, fp16)).await??
+            let variant = cfg.model_variant(&app);
+            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, variant)).await??
         };
         report.timings.load_model = t_model.elapsed().as_secs_f64();
 

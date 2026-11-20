@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use serde::Serialize;
 
-use crate::config::ExecutionProvider;
+use crate::config::{ExecutionProvider, ModelVariant};
 
 /// Model description for the GUI dropdown / MCP output.
 #[derive(Debug, Clone, Serialize)]
@@ -108,8 +108,8 @@ pub fn model_spec(name: &str) -> Result<ModelSpec> {
 pub struct Embedder {
     model: TextEmbedding,
     pub spec: ModelSpec,
-    /// True when the FP16 ONNX variant is in use.
-    pub fp16: bool,
+    /// The ONNX variant actually in use.
+    pub variant: ModelVariant,
     query_prefix: &'static str,
 }
 
@@ -120,17 +120,17 @@ impl Embedder {
         cache_dir: &Path,
         max_length: usize,
     ) -> Result<Self> {
-        Self::load_with(model_name, ep, cache_dir, max_length, false)
+        Self::load_with(model_name, ep, cache_dir, max_length, ModelVariant::Fp32)
     }
 
-    /// `fp16`: load the repo's `onnx/model_fp16.onnx` instead of the FP32 model
-    /// (falls back to FP32 if the variant is missing or fails to load).
+    /// Load a specific ONNX variant (FP16 / INT8 file of the model repo);
+    /// falls back to FP32 if the variant is missing or fails to load.
     pub fn load_with(
         model_name: &str,
         ep: ExecutionProvider,
         cache_dir: &Path,
         max_length: usize,
-        fp16: bool,
+        variant: ModelVariant,
     ) -> Result<Self> {
         let model = resolve_model(model_name)?;
         let spec = model_spec(model_name)?;
@@ -150,22 +150,21 @@ impl Embedder {
         if let Some(p) = policy {
             opts = opts.with_auto_device(p);
         }
-        let fp16_model = if fp16 {
-            match load_fp16_embedder(&model, ep, cache_dir, max_length) {
+        let variant_model = match variant.onnx_file() {
+            Some(file) => match load_variant_embedder(&model, file, ep, cache_dir, max_length) {
                 Ok(te) => {
-                    tracing::info!("using FP16 variant of {}", spec.id);
+                    tracing::info!("using {variant:?} variant of {}", spec.id);
                     Some(te)
                 }
                 Err(e) => {
-                    tracing::warn!("FP16 variant of {} unavailable ({e:#}); using FP32", spec.id);
+                    tracing::warn!("{variant:?} variant of {} unavailable ({e:#}); using FP32", spec.id);
                     None
                 }
-            }
-        } else {
-            None
+            },
+            None => None,
         };
-        let is_fp16 = fp16_model.is_some();
-        let te = match fp16_model {
+        let loaded = if variant_model.is_some() { variant } else { ModelVariant::Fp32 };
+        let te = match variant_model {
             Some(te) => te,
             None => TextEmbedding::try_new(opts)
                 .with_context(|| format!("initialising embedding model {}", spec.id))?,
@@ -177,7 +176,7 @@ impl Embedder {
         } else {
             ""
         };
-        Ok(Self { model: te, spec, fp16: is_fp16, query_prefix })
+        Ok(Self { model: te, spec, variant: loaded, query_prefix })
     }
 
     pub fn embed_documents(&mut self, texts: &[String], batch: usize) -> Result<Vec<Vec<f32>>> {
@@ -220,14 +219,14 @@ pub fn cached(
     ep: ExecutionProvider,
     cache_dir: &Path,
     max_length: usize,
-    fp16: bool,
+    variant: ModelVariant,
 ) -> Result<SharedEmbedder> {
-    let key = format!("{}|{ep:?}|{max_length}|fp16={fp16}", model_name.to_ascii_lowercase());
+    let key = format!("{}|{ep:?}|{max_length}|{variant:?}", model_name.to_ascii_lowercase());
     let cache = EMBEDDERS.get_or_init(Default::default);
     if let Some(e) = cache.lock().unwrap().get(&key) {
         return Ok(e.clone());
     }
-    let e = Arc::new(Mutex::new(Embedder::load_with(model_name, ep, cache_dir, max_length, fp16)?));
+    let e = Arc::new(Mutex::new(Embedder::load_with(model_name, ep, cache_dir, max_length, variant)?));
     cache.lock().unwrap().insert(key, e.clone());
     Ok(e)
 }
@@ -339,15 +338,16 @@ fn tokenizer_files(cache_dir: &Path, repo: &str) -> Result<fastembed::TokenizerF
 
 const FP16_FILE: &str = "onnx/model_fp16.onnx";
 
-fn load_fp16_embedder(
+fn load_variant_embedder(
     model: &EmbeddingModel,
+    file: &str,
     ep: ExecutionProvider,
     cache_dir: &Path,
     max_length: usize,
 ) -> Result<TextEmbedding> {
     let info = TextEmbedding::get_model_info(model)?;
     let repo = info.model_code.clone();
-    let onnx = std::fs::read(hf_file(cache_dir, &repo, FP16_FILE)?)?;
+    let onnx = std::fs::read(hf_file(cache_dir, &repo, file)?)?;
     let mut user = fastembed::UserDefinedEmbeddingModel::new(onnx, tokenizer_files(cache_dir, &repo)?);
     if let Some(p) = TextEmbedding::get_default_pooling_method(model) {
         user = user.with_pooling(p);
