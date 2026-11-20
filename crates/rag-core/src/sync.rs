@@ -49,6 +49,9 @@ pub struct Progress {
     /// Estimated seconds left for embedding, based on token throughput (chunks
     /// are processed short-to-long, so chunks/s alone underestimates).
     pub eta_secs: Option<f64>,
+    /// Chunking phase: files chunked so far / files to chunk.
+    pub files_chunked: usize,
+    pub files_to_chunk: usize,
     /// Index phase: completed steps / total steps (0/0 outside that phase).
     pub index_step: usize,
     pub index_steps: usize,
@@ -160,6 +163,16 @@ impl Reporter {
     }
 }
 
+/// CPU pool for hashing/chunking: all logical threads, or all but 2 in
+/// low-impact mode (same rule as ONNX Runtime's threads).
+fn cpu_pool(threads: Option<usize>) -> Result<rayon::ThreadPool> {
+    let mut b = rayon::ThreadPoolBuilder::new().thread_name(|i| format!("rag-cpu-{i}"));
+    if let Some(n) = threads {
+        b = b.num_threads(n);
+    }
+    Ok(b.build()?)
+}
+
 fn check(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Relaxed) {
         bail!(Cancelled);
@@ -180,6 +193,8 @@ pub async fn sync_index(paths: &Paths, index_id: &str, opts: SyncOptions) -> Res
             chunks_per_sec: 0.0,
             elapsed_secs: 0.0,
             eta_secs: None,
+            files_chunked: 0,
+            files_to_chunk: 0,
             index_step: 0,
             index_steps: 0,
             message: None,
@@ -255,11 +270,13 @@ async fn sync_inner(
         let prev = manifest.files.clone();
         let cb = rep.cb.clone();
         let id = index_id.to_string();
+        let threads = app.intra_threads();
         tokio::task::spawn_blocking(move || -> Result<_> {
+            let pool = cpu_pool(threads)?;
             let files = walker::walk(&cfg, &cancel)?;
             let total = files.len();
             let last = std::sync::Mutex::new(Instant::now());
-            let hashed = walker::hash_all(&files, &prev, &cancel, |n| {
+            let hashed = pool.install(|| walker::hash_all(&files, &prev, &cancel, |n| {
                 if let Some(cb) = &cb {
                     let mut last = last.lock().unwrap();
                     if last.elapsed() >= Duration::from_millis(100) || n == total {
@@ -275,13 +292,15 @@ async fn sync_inner(
                             chunks_per_sec: 0.0,
                             elapsed_secs: 0.0,
                             eta_secs: None,
+                            files_chunked: 0,
+                            files_to_chunk: 0,
                             index_step: 0,
                             index_steps: 0,
                             message: None,
                         });
                     }
                 }
-            })?;
+            }))?;
             Ok((files, hashed))
         })
         .await??
@@ -370,24 +389,41 @@ async fn sync_inner(
     let overlap = if cfg.chunk_overlap >= chunk_size { chunk_size / 10 } else { cfg.chunk_overlap };
     let chunks: Vec<Chunk> = {
         let cancel = cancel.clone();
+        let threads = app.intra_threads();
+        let (cb, base) = (rep.cb.clone(), rep.p.clone());
         tokio::task::spawn_blocking(move || -> Result<Vec<Chunk>> {
-            // Files are independent: chunk them on all CPU cores.
+            // Files are independent: chunk them in parallel, reporting progress.
             use rayon::prelude::*;
-            let per_file: Vec<Vec<Chunk>> = jobs
-                .par_iter()
-                .map(|(rel, path)| {
-                    if cancel.load(Ordering::Relaxed) {
-                        return Vec::new();
+            let total = jobs.len();
+            let done = std::sync::atomic::AtomicUsize::new(0);
+            let last = std::sync::Mutex::new(Instant::now());
+            let report = |n: usize| {
+                if let Some(cb) = &cb {
+                    let mut last = last.lock().unwrap();
+                    if last.elapsed() >= Duration::from_millis(100) || n == total {
+                        *last = Instant::now();
+                        cb(&Progress { phase: Phase::Chunking, files_chunked: n, files_to_chunk: total, ..base.clone() });
                     }
-                    match std::fs::read(path) {
-                        Ok(bytes) => chunk_text(rel, &String::from_utf8_lossy(&bytes), chunk_size, overlap),
-                        Err(e) => {
-                            tracing::warn!("cannot read {}: {e}", path.display());
-                            Vec::new()
+                }
+            };
+            let per_file: Vec<Vec<Chunk>> = cpu_pool(threads)?.install(|| {
+                jobs.par_iter()
+                    .map(|(rel, path)| {
+                        if cancel.load(Ordering::Relaxed) {
+                            return Vec::new();
                         }
-                    }
-                })
-                .collect();
+                        let out = match std::fs::read(path) {
+                            Ok(bytes) => chunk_text(rel, &String::from_utf8_lossy(&bytes), chunk_size, overlap),
+                            Err(e) => {
+                                tracing::warn!("cannot read {}: {e}", path.display());
+                                Vec::new()
+                            }
+                        };
+                        report(done.fetch_add(1, Ordering::Relaxed) + 1);
+                        out
+                    })
+                    .collect()
+            });
             check(&cancel)?;
             Ok(per_file.into_iter().flatten().collect())
         })

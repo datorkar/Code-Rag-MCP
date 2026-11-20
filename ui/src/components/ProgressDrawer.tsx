@@ -90,6 +90,17 @@ export function ProgressDrawer({ jobs, finished, indexes, open, onToggle, onCanc
                       </div>
                       <Bar value={p.files_scanned} total={p.files_total || 1} color="bg-zinc-500" />
                     </div>
+                    {p.phase === "chunking" && p.files_to_chunk > 0 && (
+                      <div>
+                        <div className="mb-1 flex justify-between">
+                          <span>Files chunked</span>
+                          <span className="font-mono">
+                            {p.files_chunked.toLocaleString()} / {p.files_to_chunk.toLocaleString()}
+                          </span>
+                        </div>
+                        <Bar value={p.files_chunked} total={p.files_to_chunk} color="bg-sky-500" />
+                      </div>
+                    )}
                     {embedding && (
                       <div>
                         <div className="mb-1 flex justify-between">
