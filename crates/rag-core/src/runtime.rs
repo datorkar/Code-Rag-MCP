@@ -134,9 +134,27 @@ pub fn environment() -> Result<Environment> {
 fn register_ready(state: &State) -> Result<Vec<String>> {
     let dir = state.dll_dir.as_ref().expect("winml has a dll dir");
     let mut newly = Vec::new();
-    for p in crate::winml::list_providers(dir)? {
-        if !p.certified || p.ready_state != crate::winml::ReadyState::Ready {
+    for mut p in crate::winml::list_providers(dir)? {
+        if !p.certified {
             continue;
+        }
+        match p.ready_state {
+            crate::winml::ReadyState::Ready => {}
+            // Installed earlier, but Windows ML reports it NotReady in each new
+            // process until EnsureReady is called (fast when already on disk;
+            // Microsoft's samples always call it before registering).
+            crate::winml::ReadyState::NotReady => {
+                let no_cancel = std::sync::atomic::AtomicBool::new(false);
+                match crate::winml::ensure_ready(dir, &p.name, &no_cancel, &|_| {}) {
+                    Ok(ready) => p = ready,
+                    Err(e) => {
+                        tracing::warn!("Windows ML provider {} not ready: {e:#}", p.name);
+                        continue;
+                    }
+                }
+            }
+            // Never downloaded: only on explicit request (GPU panel).
+            crate::winml::ReadyState::NotPresent => continue,
         }
         let Some(lib) = p.library_path.as_ref() else { continue };
         let mut reg = state.registered.lock().unwrap();
