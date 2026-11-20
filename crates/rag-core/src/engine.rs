@@ -203,7 +203,8 @@ impl Engine {
         let emb = {
             let (model, ep, dir) = (ix.embed_model.clone(), app.execution_provider, self.paths.models_dir());
             let max_len = embedder::max_length_for_chunk_size(ix.chunk_size);
-            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len)).await??
+            let fp16 = app.fp16_enabled();
+            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, fp16)).await??
         };
         let q = query.to_string();
         let vector = tokio::task::spawn_blocking(move || emb.lock().unwrap().embed_query(&q)).await??;
@@ -212,7 +213,7 @@ impl Engine {
         let mut hits = store.search(query, &vector, candidates).await?;
 
         if let Some(model) = app.reranker_model.clone().filter(|_| hits.len() > 1) {
-            match self.rerank(&model, app.execution_provider, query, &hits).await {
+            match self.rerank(&model, app.execution_provider, app.fp16_enabled(), query, &hits).await {
                 Ok(order) => {
                     hits = order
                         .into_iter()
@@ -238,12 +239,13 @@ impl Engine {
         &self,
         model: &str,
         ep: crate::ExecutionProvider,
+        fp16: bool,
         query: &str,
         hits: &[SearchHit],
     ) -> Result<Vec<(usize, f32)>> {
         let rr = {
             let (model, dir) = (model.to_string(), self.paths.models_dir());
-            tokio::task::spawn_blocking(move || embedder::cached_reranker(&model, ep, &dir)).await??
+            tokio::task::spawn_blocking(move || embedder::cached_reranker(&model, ep, &dir, fp16)).await??
         };
         let docs: Vec<String> = hits
             .iter()

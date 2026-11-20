@@ -16,7 +16,9 @@ publish = false
 ### BEGIN HAKARI SECTION
 [dependencies]
 aho-corasick = { version = "1" }
+base64 = { version = "0.23" }
 bytes = { version = "1" }
+crc32fast = { version = "1" }
 crossbeam-utils = { version = "0.8" }
 either = { version = "1", features = ["use_std"] }
 fastrand = { version = "2" }
@@ -51,6 +53,7 @@ semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "unbounded_depth"] }
+simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_generics", "union"] }
 stable_deref_trait = { version = "1" }
 tauri-utils = { version = "2", default-features = false, features = ["build-2", "compression", "resources"] }
@@ -71,8 +74,10 @@ zerovec = { version = "0.11", default-features = false, features = ["alloc", "de
 
 [build-dependencies]
 aho-corasick = { version = "1" }
+base64 = { version = "0.23" }
 bytes = { version = "1" }
 cc = { version = "1", default-features = false, features = ["parallel"] }
+crc32fast = { version = "1" }
 either = { version = "1", features = ["use_std"] }
 fastrand = { version = "2" }
 foldhash = { version = "0.2" }
@@ -102,6 +107,7 @@ semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "unbounded_depth"] }
+simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_generics", "union"] }
 stable_deref_trait = { version = "1" }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
@@ -120,23 +126,18 @@ zerovec = { version = "0.11", default-features = false, features = ["alloc", "de
 
 [target.x86_64-pc-windows-msvc.dependencies]
 bitflags = { version = "2", default-features = false, features = ["serde"] }
-crc32fast = { version = "1" }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["serde"] }
-crc32fast = { version = "1" }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
-crc32fast = { version = "1" }
 futures-channel = { version = "0.3" }
 futures-core = { version = "0.3" }
 futures-executor = { version = "0.3" }
@@ -146,18 +147,15 @@ getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-f
 libc = { version = "0.2", features = ["extra_traits"] }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 rustix = { version = "1", features = ["event", "fs", "net", "process", "system"] }
-simd-adler32 = { version = "0.3" }
 slab = { version = "0.4" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
-crc32fast = { version = "1" }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 rustix = { version = "1", features = ["event", "fs", "net", "process", "system"] }
-simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 
 ### END HAKARI SECTION

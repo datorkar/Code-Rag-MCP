@@ -108,6 +108,23 @@ export function SettingsModal({
             memory.
           </p>
         </div>
+        <div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-indigo-500"
+              checked={s.half_precision}
+              disabled={s.execution_provider === "cpu"}
+              onChange={(e) => setS({ ...s, half_precision: e.target.checked })}
+            />
+            Half precision (FP16) on GPU
+          </label>
+          <p className="mt-1 text-xs text-zinc-500">
+            Uses the models' FP16 versions: typically 1.5–2x faster on GPU with the same search results. Ignored on CPU
+            (FP16 is slower there). Downloads the FP16 model files on first use. Env override:{" "}
+            <code className="font-mono">LOCAL_CODE_RAG_FP16=1|0</code>.
+          </p>
+        </div>
         <div className="border-t border-zinc-800 pt-4">
           <label className="label">Reranker (cross-encoder)</label>
           <select

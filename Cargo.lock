@@ -6241,6 +6241,7 @@ dependencies = [
  "dirs 7.0.0",
  "fastembed",
  "futures",
+ "hf-hub",
  "ignore",
  "lancedb",
  "libloading 0.9.1",
@@ -9588,6 +9589,7 @@ name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "base64 0.23.1",
  "bitflags 2.13.2",
  "bytes",
  "cc",

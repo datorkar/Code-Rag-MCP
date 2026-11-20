@@ -133,3 +133,25 @@ async fn index_search_and_incremental_sync() {
     engine.delete_index("test").await.unwrap();
     assert!(engine.config().unwrap().indexes.is_empty());
 }
+
+/// FP16 model variant loads and produces the same embeddings as FP32.
+#[test]
+#[ignore]
+fn fp16_variant_matches_fp32() {
+    use rag_core::embedder::Embedder;
+    use rag_core::ExecutionProvider;
+    let cache = std::env::var("RAG_TEST_MODELS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    let texts = vec![
+        "void UHealthComponent::ApplyDamage(float Amount) { Health -= Amount; }".to_string(),
+        "fn chunk_text(rel_path: &str, text: &str) -> Vec<Chunk> { todo!() }".to_string(),
+    ];
+    let mut a = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, false).unwrap();
+    let mut b = Embedder::load_with("BAAI/bge-small-en-v1.5", ExecutionProvider::Auto, &cache, 256, true).unwrap();
+    assert!(!a.fp16 && b.fp16, "FP16 variant actually loaded");
+    let (va, vb) = (a.embed_documents(&texts, 2).unwrap(), b.embed_documents(&texts, 2).unwrap());
+    for (x, y) in va.iter().zip(&vb) {
+        let cos: f32 = x.iter().zip(y).map(|(p, q)| p * q).sum::<f32>()
+            / (x.iter().map(|p| p * p).sum::<f32>().sqrt() * y.iter().map(|q| q * q).sum::<f32>().sqrt());
+        assert!(cos > 0.999, "fp16 vs fp32 cosine {cos}");
+    }
+}

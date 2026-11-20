@@ -38,6 +38,10 @@ pub struct AppConfig {
     /// Approximate tokens per batch (batch size x longest chunk). 0 = auto:
     /// 32768 on GPU, 8192 on CPU. Halved automatically on out-of-memory.
     pub embed_token_budget: usize,
+    /// Use the FP16 ONNX variants on GPU (same results, ~1.5-2x faster on most
+    /// GPUs; ignored on CPU where FP16 is slower). `LOCAL_CODE_RAG_FP16=1|0`
+    /// overrides this.
+    pub half_precision: bool,
     /// Cross-encoder used to re-score hybrid results (`None` = disabled).
     #[serde(default = "default_reranker")]
     pub reranker_model: Option<String>,
@@ -62,6 +66,7 @@ impl Default for AppConfig {
             execution_provider: ExecutionProvider::Auto,
             embed_batch_size: 0,
             embed_token_budget: 0,
+            half_precision: false,
             reranker_model: Some(DEFAULT_RERANKER.into()),
             rerank_candidates: 30,
             auto_sync_max_files: 200,
@@ -216,6 +221,17 @@ impl AppConfig {
         let out = f(&mut cfg)?;
         cfg.save(paths)?;
         Ok(out)
+    }
+
+    /// Whether FP16 models should be used: setting or `LOCAL_CODE_RAG_FP16`
+    /// env override, and only for GPU execution providers.
+    pub fn fp16_enabled(&self) -> bool {
+        let wanted = match std::env::var("LOCAL_CODE_RAG_FP16").ok().as_deref().map(str::trim) {
+            Some("1") | Some("true") | Some("on") => true,
+            Some("0") | Some("false") | Some("off") => false,
+            _ => self.half_precision,
+        };
+        wanted && self.execution_provider != ExecutionProvider::Cpu
     }
 
     pub fn index(&self, id: &str) -> Option<&IndexConfig> {

@@ -33,6 +33,8 @@ struct GlobalSettings {
     embed_batch_size: usize,
     #[serde(default)]
     embed_token_budget: usize,
+    #[serde(default)]
+    half_precision: bool,
     reranker_model: Option<String>,
     rerank_candidates: usize,
     auto_sync_max_files: usize,
@@ -100,6 +102,7 @@ fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
         execution_provider: c.execution_provider,
         embed_batch_size: c.embed_batch_size,
         embed_token_budget: c.embed_token_budget,
+        half_precision: c.half_precision,
         reranker_model: c.reranker_model.clone(),
         rerank_candidates: c.rerank_candidates,
         auto_sync_max_files: c.auto_sync_max_files,
@@ -123,6 +126,7 @@ fn save_settings(state: State<'_, AppState>, settings: GlobalSettings) -> CmdRes
             c.execution_provider = settings.execution_provider;
             c.embed_batch_size = settings.embed_batch_size.min(512);
             c.embed_token_budget = settings.embed_token_budget;
+            c.half_precision = settings.half_precision;
             c.reranker_model = reranker.clone();
             c.rerank_candidates = settings.rerank_candidates.clamp(5, 200);
             c.auto_sync_max_files = settings.auto_sync_max_files;

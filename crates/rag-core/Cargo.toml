@@ -32,6 +32,8 @@ futures = "0.3"
 fastembed = { version = "7.7", default-features = false, features = ["hf-hub-native-tls"] }
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-24"] }
 libloading = { version = "0.9", optional = true }
+# Same version/features fastembed uses; fetches the FP16 ONNX variants.
+hf-hub = { version = "0.5", default-features = false, features = ["ureq", "native-tls"] }
 
 # Arrow types come from lancedb::arrow so versions can never diverge.
 lancedb = "0.41"

@@ -42,6 +42,7 @@ export interface GlobalSettings {
   execution_provider: ExecutionProvider;
   embed_batch_size: number;
   embed_token_budget: number;
+  half_precision: boolean;
   reranker_model: string | null;
   rerank_candidates: number;
   auto_sync_max_files: number;
