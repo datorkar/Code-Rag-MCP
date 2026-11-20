@@ -103,6 +103,17 @@ export function ProgressDrawer({ jobs, finished, indexes, open, onToggle, onCanc
                         <Bar value={p.chunks_embedded} total={p.chunks_total} />
                       </div>
                     )}
+                    {p.phase === "building_index" && p.index_steps > 0 && (
+                      <div>
+                        <div className="mb-1 flex justify-between">
+                          <span>Indexes</span>
+                          <span className="font-mono">
+                            step {Math.min(p.index_step + 1, p.index_steps)} / {p.index_steps}
+                          </span>
+                        </div>
+                        <Bar value={p.index_step} total={p.index_steps} color="bg-emerald-500" />
+                      </div>
+                    )}
                     {p.message && <div className="truncate text-zinc-500">{p.message}</div>}
                   </div>
                 </div>

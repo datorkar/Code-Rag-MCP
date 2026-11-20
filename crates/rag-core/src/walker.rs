@@ -107,41 +107,47 @@ pub fn hash_file(path: &Path) -> std::io::Result<String> {
 }
 
 /// Build the new manifest file map, reusing hashes for files whose size and
-/// mtime are unchanged. `on_file` is called with the running count.
+/// mtime are unchanged. Hashing runs on all CPU cores; `on_file` receives the
+/// running count (from worker threads).
 pub fn hash_all(
     files: &[WalkedFile],
     previous: &BTreeMap<String, FileEntry>,
     cancel: &AtomicBool,
-    mut on_file: impl FnMut(usize),
+    on_file: impl Fn(usize) + Sync,
 ) -> Result<BTreeMap<String, FileEntry>> {
-    let mut out = BTreeMap::new();
-    for (i, f) in files.iter().enumerate() {
-        if cancel.load(Ordering::Relaxed) {
-            bail!(crate::Cancelled);
-        }
-        let reuse = previous
-            .get(&f.rel_path)
-            .filter(|p| p.size == f.size && p.mtime_ns == f.mtime_ns && f.mtime_ns != 0);
-        let hash = match reuse {
-            Some(p) => p.hash.clone(),
-            None => match hash_file(&f.abs_path) {
-                Ok(h) => h,
-                Err(e) => {
-                    tracing::warn!("cannot hash {}: {e}", f.abs_path.display());
-                    continue;
-                }
-            },
-        };
-        out.insert(
-            f.rel_path.clone(),
-            FileEntry { hash, size: f.size, mtime_ns: f.mtime_ns },
-        );
-        if i % 256 == 0 {
-            on_file(i + 1);
-        }
+    use rayon::prelude::*;
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let entries: Vec<Option<(String, FileEntry)>> = files
+        .par_iter()
+        .map(|f| {
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            let reuse = previous
+                .get(&f.rel_path)
+                .filter(|p| p.size == f.size && p.mtime_ns == f.mtime_ns && f.mtime_ns != 0);
+            let hash = match reuse {
+                Some(p) => p.hash.clone(),
+                None => match hash_file(&f.abs_path) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        tracing::warn!("cannot hash {}: {e}", f.abs_path.display());
+                        return None;
+                    }
+                },
+            };
+            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 256 == 0 {
+                on_file(n);
+            }
+            Some((f.rel_path.clone(), FileEntry { hash, size: f.size, mtime_ns: f.mtime_ns }))
+        })
+        .collect();
+    if cancel.load(Ordering::Relaxed) {
+        bail!(crate::Cancelled);
     }
     on_file(files.len());
-    Ok(out)
+    Ok(entries.into_iter().flatten().collect())
 }
 
 #[cfg(test)]

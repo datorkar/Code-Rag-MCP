@@ -28,6 +28,7 @@ dirs = "7"
 ignore = "0.4"
 blake3 = { version = "1", features = ["mmap"] }
 futures = "0.3"
+rayon = "1"
 
 fastembed = { version = "7.7", default-features = false, features = ["hf-hub-native-tls"] }
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-24"] }

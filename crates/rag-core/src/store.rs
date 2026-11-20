@@ -61,6 +61,9 @@ pub async fn connect(paths: &Paths) -> Result<Connection> {
         .with_context(|| format!("opening LanceDB at {}", uri.display()))
 }
 
+/// Index phase progress: `(completed_step, total_steps, label)`.
+pub type IndexProgress<'a> = dyn FnMut(usize, usize, &str) + Send + 'a;
+
 pub struct ChunkStore {
     pub table: Table,
 }
@@ -181,23 +184,26 @@ impl ChunkStore {
 
     /// After a sync: full rebuild of indices (+ compaction) for large changes,
     /// otherwise an incremental index update that only covers new rows.
-    pub async fn update_indices(&self, changed_rows: usize) -> Result<()> {
+    pub async fn update_indices(&self, changed_rows: usize, progress: &mut IndexProgress<'_>) -> Result<()> {
         let total = self.count().await?;
         if total == 0 {
             return Ok(());
         }
         let large = changed_rows * 10 >= total; // >= 10% of the table
         if large || !self.has_fts_index().await {
-            return self.rebuild_indices().await;
+            return self.rebuild_indices(progress).await;
         }
+        progress(0, 1, "updating keyword index");
+        self.drop_vector_index().await;
         if let Err(e) = self
             .table
             .optimize(lancedb::table::OptimizeAction::Index(lancedb::table::OptimizeOptions::default()))
             .await
         {
             tracing::warn!("incremental index update failed ({e}); rebuilding");
-            return self.rebuild_indices().await;
+            return self.rebuild_indices(progress).await;
         }
+        progress(1, 1, "indexes ready");
         Ok(())
     }
 
@@ -209,12 +215,30 @@ impl ChunkStore {
             .unwrap_or(false)
     }
 
-    /// (Re)build the BM25 index on `text` plus a BTree on `path` for fast deletes.
-    pub async fn rebuild_indices(&self) -> Result<()> {
+    /// Drop any ANN vector index. Exact vector search is used instead: an
+    /// IVF_PQ index matched only ~76% of exact top-30 results on real code
+    /// embeddings, while exact search over ~200k chunks stays well under a second.
+    pub async fn drop_vector_index(&self) {
+        if let Ok(ix) = self.table.list_indices().await {
+            for i in ix.iter().filter(|i| i.columns.iter().any(|c| c == "vector")) {
+                match self.table.drop_index(&i.name).await {
+                    Ok(()) => tracing::info!("dropped vector index {} (exact search is used)", i.name),
+                    Err(e) => tracing::warn!("could not drop vector index {}: {e}", i.name),
+                }
+            }
+        }
+    }
+
+    /// (Re)build the BM25 index on `text` plus a BTree on `path` for fast deletes,
+    /// then compact. Reports progress per step.
+    pub async fn rebuild_indices(&self, progress: &mut IndexProgress<'_>) -> Result<()> {
         let rows = self.count().await?;
         if rows == 0 {
             return Ok(());
         }
+        const STEPS: usize = 3;
+        progress(0, STEPS, "building keyword index");
+        self.drop_vector_index().await;
         // Code-friendly tokenisation: no stemming / stop-word removal, keep
         // identifiers like `UCharacterMovementComponent` intact (lower-cased).
         let fts = FtsIndexBuilder::default().stem(false).remove_stop_words(false);
@@ -224,6 +248,7 @@ impl ChunkStore {
             .execute()
             .await
             .context("building full-text index")?;
+        progress(1, STEPS, "building path index");
         let has_path_ix = self
             .table
             .list_indices()
@@ -235,22 +260,11 @@ impl ChunkStore {
                 tracing::warn!("could not create path index: {e}");
             }
         }
-        if rows >= 100_000 {
-            let has_vec_ix = self
-                .table
-                .list_indices()
-                .await
-                .map(|ix| ix.iter().any(|i| i.columns.iter().any(|c| c == "vector")))
-                .unwrap_or(false);
-            if !has_vec_ix {
-                if let Err(e) = self.table.create_index(&["vector"], Index::Auto).execute().await {
-                    tracing::warn!("could not create vector index: {e}");
-                }
-            }
-        }
+        progress(2, STEPS, "compacting");
         if let Err(e) = self.table.optimize(lancedb::table::OptimizeAction::All).await {
             tracing::warn!("optimize failed: {e}");
         }
+        progress(STEPS, STEPS, "indexes ready");
         Ok(())
     }
 

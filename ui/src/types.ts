@@ -77,6 +77,8 @@ export interface Progress {
   chunks_per_sec: number;
   elapsed_secs: number;
   eta_secs: number | null;
+  index_step: number;
+  index_steps: number;
   message: string | null;
 }
 

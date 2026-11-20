@@ -49,6 +49,9 @@ pub struct Progress {
     /// Estimated seconds left for embedding, based on token throughput (chunks
     /// are processed short-to-long, so chunks/s alone underestimates).
     pub eta_secs: Option<f64>,
+    /// Index phase: completed steps / total steps (0/0 outside that phase).
+    pub index_step: usize,
+    pub index_steps: usize,
     pub message: Option<String>,
 }
 
@@ -170,6 +173,8 @@ pub async fn sync_index(paths: &Paths, index_id: &str, opts: SyncOptions) -> Res
             chunks_per_sec: 0.0,
             elapsed_secs: 0.0,
             eta_secs: None,
+            index_step: 0,
+            index_steps: 0,
             message: None,
         },
         start: Instant::now(),
@@ -244,11 +249,12 @@ async fn sync_inner(
         tokio::task::spawn_blocking(move || -> Result<_> {
             let files = walker::walk(&cfg, &cancel)?;
             let total = files.len();
-            let mut last = Instant::now();
+            let last = std::sync::Mutex::new(Instant::now());
             let hashed = walker::hash_all(&files, &prev, &cancel, |n| {
                 if let Some(cb) = &cb {
+                    let mut last = last.lock().unwrap();
                     if last.elapsed() >= Duration::from_millis(100) || n == total {
-                        last = Instant::now();
+                        *last = Instant::now();
                         cb(&Progress {
                             index_id: id.clone(),
                             phase: Phase::Hashing,
@@ -260,6 +266,8 @@ async fn sync_inner(
                             chunks_per_sec: 0.0,
                             elapsed_secs: 0.0,
                             eta_secs: None,
+                            index_step: 0,
+                            index_steps: 0,
                             message: None,
                         });
                     }
@@ -307,7 +315,13 @@ async fn sync_inner(
     if diff.is_empty() {
         if !store.has_fts_index().await && store.count().await? > 0 {
             rep.phase(Phase::BuildingIndex, "building full-text index".to_string());
-            store.rebuild_indices().await?;
+            store
+                .rebuild_indices(&mut |step, steps, label| {
+                    rep.p.index_step = step;
+                    rep.p.index_steps = steps;
+                    rep.phase(Phase::BuildingIndex, label.to_string());
+                })
+                .await?;
         }
         return finish(paths, index_id, &store, report, rep).await;
     }
@@ -345,18 +359,25 @@ async fn sync_inner(
     let chunks: Vec<Chunk> = {
         let cancel = cancel.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Chunk>> {
-            let mut out = Vec::new();
-            for (rel, path) in jobs {
-                check(&cancel)?;
-                match std::fs::read(&path) {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        out.extend(chunk_text(&rel, &text, chunk_size, overlap));
+            // Files are independent: chunk them on all CPU cores.
+            use rayon::prelude::*;
+            let per_file: Vec<Vec<Chunk>> = jobs
+                .par_iter()
+                .map(|(rel, path)| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Vec::new();
                     }
-                    Err(e) => tracing::warn!("cannot read {}: {e}", path.display()),
-                }
-            }
-            Ok(out)
+                    match std::fs::read(path) {
+                        Ok(bytes) => chunk_text(rel, &String::from_utf8_lossy(&bytes), chunk_size, overlap),
+                        Err(e) => {
+                            tracing::warn!("cannot read {}: {e}", path.display());
+                            Vec::new()
+                        }
+                    }
+                })
+                .collect();
+            check(&cancel)?;
+            Ok(per_file.into_iter().flatten().collect())
         })
         .await??
     };
@@ -532,7 +553,13 @@ async fn sync_inner(
 
     rep.phase(Phase::BuildingIndex, "updating indexes".to_string());
     let t_index = Instant::now();
-    store.update_indices(chunks.len() + to_delete.len()).await?;
+    store
+        .update_indices(chunks.len() + to_delete.len(), &mut |step, steps, label| {
+            rep.p.index_step = step;
+            rep.p.index_steps = steps;
+            rep.phase(Phase::BuildingIndex, label.to_string());
+        })
+        .await?;
     report.timings.index = t_index.elapsed().as_secs_f64();
     finish(paths, index_id, &store, report, rep).await
 }
