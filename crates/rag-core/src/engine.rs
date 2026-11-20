@@ -37,6 +37,8 @@ pub struct IndexInfo {
 pub struct SaveResult {
     pub index: IndexConfig,
     pub created: bool,
+    /// Set when settings were adjusted (e.g. chunk size clamped to the model).
+    pub note: Option<String>,
     /// Model or chunk settings changed on an existing, built index.
     pub needs_rebuild: bool,
 }
@@ -106,7 +108,18 @@ impl Engine {
     /// are preserved from the stored copy. `original_id` allows renaming.
     pub fn save_index(&self, mut ix: IndexConfig, original_id: Option<&str>) -> Result<SaveResult> {
         ix.normalize()?;
-        embedder::resolve_model(&ix.embed_model)?;
+        let spec = embedder::model_spec(&ix.embed_model)?;
+        let mut note = None;
+        if ix.chunk_size > spec.max_chunk_chars {
+            note = Some(format!(
+                "Chunk size lowered from {} to {} characters: {} reads at most {} tokens.",
+                ix.chunk_size, spec.max_chunk_chars, spec.id, spec.max_context
+            ));
+            ix.chunk_size = spec.max_chunk_chars;
+            if ix.chunk_overlap >= ix.chunk_size {
+                ix.chunk_overlap = ix.chunk_size / 10;
+            }
+        }
         AppConfig::update(&self.paths, |cfg| {
             let lookup = original_id.unwrap_or(&ix.id).to_string();
             if lookup != ix.id && cfg.index(&ix.id).is_some() {
@@ -122,13 +135,13 @@ impl Engine {
                     ix.last_indexed_at = existing.last_indexed_at;
                     ix.chunk_count = existing.chunk_count;
                     *existing = ix.clone();
-                    Ok(SaveResult { index: ix, created: false, needs_rebuild })
+                    Ok(SaveResult { index: ix, created: false, needs_rebuild, note })
                 }
                 None => {
                     ix.last_indexed_at = None;
                     ix.chunk_count = 0;
                     cfg.indexes.push(ix.clone());
-                    Ok(SaveResult { index: ix, created: true, needs_rebuild: false })
+                    Ok(SaveResult { index: ix, created: true, needs_rebuild: false, note })
                 }
             }
         })
@@ -202,7 +215,10 @@ impl Engine {
         };
         let emb = {
             let (model, ep, dir) = (ix.embed_model.clone(), app.execution_provider, self.paths.models_dir());
-            let max_len = embedder::max_length_for_chunk_size(ix.chunk_size);
+            let chunk_size = embedder::model_spec(&ix.embed_model)
+                .map(|m| ix.chunk_size.min(m.max_chunk_chars))
+                .unwrap_or(ix.chunk_size);
+            let max_len = embedder::max_length_for_chunk_size(chunk_size);
             let variant = ix.model_variant(&app);
             let threads = app.intra_threads();
             tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, variant, threads)).await??

@@ -18,6 +18,8 @@ pub struct ModelSpec {
     pub id: String,
     pub dim: usize,
     pub max_context: usize,
+    /// Largest chunk size (characters) that still fits the context window.
+    pub max_chunk_chars: usize,
     pub description: String,
     /// Shown first in the GUI.
     pub recommended: bool,
@@ -63,6 +65,7 @@ pub fn supported_models() -> Vec<ModelSpec> {
             id: display_id(&info.model, &info.model_code),
             dim: info.dim,
             max_context: max_context(&info.model),
+            max_chunk_chars: max_chunk_chars(max_context(&info.model)),
             description: info.description.clone(),
             recommended: RECOMMENDED.contains(&info.model),
         })
@@ -98,6 +101,7 @@ pub fn model_spec(name: &str) -> Result<ModelSpec> {
         id: display_id(&model, &info.model_code),
         dim: info.dim,
         max_context: max_context(&model),
+        max_chunk_chars: max_chunk_chars(max_context(&model)),
         description: info.description.clone(),
         recommended: RECOMMENDED.contains(&model),
     })
@@ -250,6 +254,15 @@ pub fn cached_worker(
     Ok(e)
 }
 
+/// Chunk size (characters) that fits a model's context: ~2.75 chars/token
+/// for code (identifiers and symbols split into many tokens), minus room for
+/// the `// File: path` header and special tokens, rounded down to 100.
+/// 512-token models -> 1300 chars; 8192-token models -> 22400 chars.
+pub fn max_chunk_chars(max_context_tokens: usize) -> usize {
+    let chars = max_context_tokens.saturating_sub(40) * 11 / 4;
+    (chars / 100 * 100).max(200)
+}
+
 /// Token budget derived from chunk size (~3 chars/token for code, plus headroom).
 pub fn max_length_for_chunk_size(chunk_size: usize) -> usize {
     (chunk_size / 3 + 96).next_power_of_two().clamp(256, 8192)
@@ -271,6 +284,7 @@ mod tests {
         let specs = supported_models();
         assert_eq!(specs[0].id, "jinaai/jina-embeddings-v2-base-code");
         assert_eq!(specs[0].max_context, 8192);
+        assert_eq!(model_spec("BAAI/bge-small-en-v1.5").unwrap().max_chunk_chars, 1200);
     }
 }
 

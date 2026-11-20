@@ -30,6 +30,7 @@ export default function App() {
   const [exportFor, setExportFor] = useState<IndexInfo | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api.listIndexes().then(setIndexes).catch((e) => setError(String(e)));
@@ -102,6 +103,7 @@ export default function App() {
   const saveIndex = async (ix: IndexConfig, rebuild: boolean) => {
     const res = await api.saveIndex(ix, editing?.isNew ? null : (editing?.ix.id ?? null));
     setEditing(null);
+    if (res.note) setNotice(res.note);
     refresh();
     if (rebuild || res.created) startIndex(res.index.id, rebuild && !res.created && res.needs_rebuild);
   };
@@ -148,6 +150,13 @@ export default function App() {
         <div className="flex items-center justify-between bg-red-500/10 px-5 py-2 text-sm text-red-300">
           <span className="whitespace-pre-wrap">{error}</span>
           <button onClick={() => setError(null)}>×</button>
+        </div>
+      )}
+
+      {notice && (
+        <div className="flex items-center justify-between bg-amber-500/10 px-5 py-2 text-sm text-amber-300">
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)}>×</button>
         </div>
       )}
 

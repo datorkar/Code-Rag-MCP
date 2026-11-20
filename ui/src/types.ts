@@ -28,6 +28,7 @@ export interface IndexInfo extends IndexConfig {
 export interface SaveResult {
   index: IndexConfig;
   created: boolean;
+  note: string | null;
   needs_rebuild: boolean;
 }
 
@@ -35,6 +36,7 @@ export interface ModelSpec {
   id: string;
   dim: number;
   max_context: number;
+  max_chunk_chars: number;
   description: string;
   recommended: boolean;
 }

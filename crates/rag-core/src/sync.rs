@@ -364,7 +364,10 @@ async fn sync_inner(
         .iter()
         .filter_map(|p| abs.get(p.as_str()).map(|a| (p.clone(), a.to_path_buf())))
         .collect();
-    let (chunk_size, overlap) = (cfg.chunk_size, cfg.chunk_overlap);
+    // Never produce chunks longer than the model can read (covers configs
+    // saved before this check or edited by hand).
+    let chunk_size = cfg.chunk_size.min(spec.max_chunk_chars);
+    let overlap = if cfg.chunk_overlap >= chunk_size { chunk_size / 10 } else { cfg.chunk_overlap };
     let chunks: Vec<Chunk> = {
         let cancel = cancel.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Chunk>> {
@@ -467,7 +470,7 @@ async fn sync_inner(
     }
 
     // --- embed (length-sorted, token-budget batches) --------------------------
-    let max_len = embedder::max_length_for_chunk_size(cfg.chunk_size);
+    let max_len = embedder::max_length_for_chunk_size(chunk_size);
     // Longest first: out-of-memory shows up immediately, and the token-based
     // ETA is accurate from the start.
     unique.sort_by_key(|&i| std::cmp::Reverse(chunks[i].text.len()));

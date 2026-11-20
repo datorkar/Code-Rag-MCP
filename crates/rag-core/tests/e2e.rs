@@ -273,3 +273,36 @@ async fn export_import_roundtrip() {
     assert_eq!(hits[0].path, "Stamina.cpp");
     assert!(hits[0].text.contains("Regen"));
 }
+
+/// Small-context models get their chunk size clamped on save (no model download).
+#[test]
+fn chunk_size_clamped_to_model_context() {
+    let data = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    let engine = Engine::with_paths(Paths::at(data.path()).unwrap());
+    let r = engine
+        .save_index(
+            IndexConfig {
+                id: "small".into(),
+                root_path: src.path().to_string_lossy().into(),
+                embed_model: "BAAI/bge-small-en-v1.5".into(),
+                chunk_size: 3000,
+                chunk_overlap: 1500,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(r.index.chunk_size, 1200);
+    assert!(r.index.chunk_overlap < 1200);
+    assert!(r.note.as_deref().unwrap_or("").contains("1200"), "{:?}", r.note);
+    // Large-context default keeps its chunk size.
+    let r = engine
+        .save_index(
+            IndexConfig { id: "big".into(), root_path: src.path().to_string_lossy().into(), chunk_size: 3000, ..Default::default() },
+            None,
+        )
+        .unwrap();
+    assert_eq!(r.index.chunk_size, 3000);
+    assert!(r.note.is_none());
+}

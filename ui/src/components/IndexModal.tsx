@@ -132,7 +132,18 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
 
         <div className="col-span-2">
           <label className="label">Embedding model</label>
-          <select className="input" value={ix.embed_model} onChange={(e) => set("embed_model", e.target.value)}>
+          <select
+            className="input"
+            value={ix.embed_model}
+            onChange={(e) => {
+              const m = models.find((x) => x.id === e.target.value);
+              setIx((p) => {
+                const size = m ? Math.min(p.chunk_size, m.max_chunk_chars) : p.chunk_size;
+                const overlap = p.chunk_overlap >= size ? Math.floor(size / 10) : p.chunk_overlap;
+                return { ...p, embed_model: e.target.value, chunk_size: size, chunk_overlap: overlap };
+              });
+            }}
+          >
             {!model && <option value={ix.embed_model}>{ix.embed_model} (unknown)</option>}
             <optgroup label="Recommended">
               {models
@@ -154,6 +165,12 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
             </optgroup>
           </select>
           {model && <p className="mt-1 text-xs text-zinc-500">{model.description}</p>}
+          {model && ix.chunk_size > model.max_chunk_chars && (
+            <p className="mt-2 rounded border border-amber-600/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-300">
+              {model.id} reads at most {model.max_context} tokens: chunk size will be lowered to{" "}
+              {model.max_chunk_chars.toLocaleString()} characters on save.
+            </p>
+          )}
           {rebuildNeeded && (
             <p className="mt-2 rounded border border-amber-600/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-300">
               Changing the model or chunking invalidates all {initial.chunk_count.toLocaleString()} stored chunks — a
@@ -211,11 +228,12 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
         </div>
 
         <div>
-          <label className="label">Chunk size (chars)</label>
+          <label className="label">Chunk size (chars){model ? ` · max ${model.max_chunk_chars.toLocaleString()}` : ""}</label>
           <input
             type="number"
             className="input"
             min={200}
+            max={model?.max_chunk_chars}
             step={100}
             value={ix.chunk_size}
             onChange={(e) => set("chunk_size", Number(e.target.value))}
