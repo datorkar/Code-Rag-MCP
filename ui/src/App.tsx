@@ -71,6 +71,7 @@ export default function App() {
           chunks_total: 0,
           chunks_per_sec: 0,
           elapsed_secs: 0,
+          eta_secs: null,
           message: null,
         },
       }));

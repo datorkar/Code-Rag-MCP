@@ -51,6 +51,8 @@ async fn index_search_and_incremental_sync() {
         )
         .unwrap();
 
+    // Exercise concurrent embedding sessions (default on GPU) and small batches.
+    engine.update_settings(|c| { c.embed_workers = 2; c.embed_token_budget = 600; }).unwrap();
     let phases = Arc::new(Mutex::new(Vec::new()));
     let ph = phases.clone();
     let r = engine

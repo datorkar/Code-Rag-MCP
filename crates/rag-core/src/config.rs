@@ -70,8 +70,11 @@ pub struct AppConfig {
     /// `embed_token_budget`).
     pub embed_batch_size: usize,
     /// Approximate tokens per batch (batch size x longest chunk). 0 = auto:
-    /// 32768 on GPU, 8192 on CPU. Halved automatically on out-of-memory.
+    /// 65536 on GPU, 8192 on CPU. Halved automatically on out-of-memory.
     pub embed_token_budget: usize,
+    /// Parallel embedding sessions (0 = auto: 2 on GPU, 1 on CPU). Two sessions
+    /// keep the GPU busy while the other one tokenizes on the CPU.
+    pub embed_workers: usize,
     /// Troubleshooting: never use the FP16 models on GPU (e.g. GPUs with slow
     /// FP16 such as GTX 10-series, or driver issues). `LOCAL_CODE_RAG_FP16=0|1`
     /// overrides this.
@@ -100,6 +103,7 @@ impl Default for AppConfig {
             execution_provider: ExecutionProvider::Auto,
             embed_batch_size: 0,
             embed_token_budget: 0,
+            embed_workers: 0,
             force_fp32: false,
             reranker_model: Some(DEFAULT_RERANKER.into()),
             rerank_candidates: 30,

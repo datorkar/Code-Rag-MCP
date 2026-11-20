@@ -221,7 +221,20 @@ pub fn cached(
     max_length: usize,
     variant: ModelVariant,
 ) -> Result<SharedEmbedder> {
-    let key = format!("{}|{ep:?}|{max_length}|{variant:?}", model_name.to_ascii_lowercase());
+    cached_worker(model_name, ep, cache_dir, max_length, variant, 0)
+}
+
+/// Like [`cached`], but `worker` selects an independent session of the same
+/// model (used to run several batches concurrently on a GPU).
+pub fn cached_worker(
+    model_name: &str,
+    ep: ExecutionProvider,
+    cache_dir: &Path,
+    max_length: usize,
+    variant: ModelVariant,
+    worker: usize,
+) -> Result<SharedEmbedder> {
+    let key = format!("{}|{ep:?}|{max_length}|{variant:?}|w{worker}", model_name.to_ascii_lowercase());
     let cache = EMBEDDERS.get_or_init(Default::default);
     if let Some(e) = cache.lock().unwrap().get(&key) {
         return Ok(e.clone());

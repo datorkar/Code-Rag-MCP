@@ -46,6 +46,9 @@ pub struct Progress {
     pub chunks_total: usize,
     pub chunks_per_sec: f64,
     pub elapsed_secs: f64,
+    /// Estimated seconds left for embedding, based on token throughput (chunks
+    /// are processed short-to-long, so chunks/s alone underestimates).
+    pub eta_secs: Option<f64>,
     pub message: Option<String>,
 }
 
@@ -114,6 +117,8 @@ struct Reporter {
     p: Progress,
     start: Instant,
     embed_start: Option<Instant>,
+    tokens_total: usize,
+    tokens_done: usize,
     cb: Option<ProgressFn>,
     last_emit: Instant,
 }
@@ -125,6 +130,10 @@ impl Reporter {
             let s = t.elapsed().as_secs_f64();
             if s > 0.0 {
                 self.p.chunks_per_sec = self.p.chunks_embedded as f64 / s;
+                if self.tokens_done > 0 {
+                    let rate = self.tokens_done as f64 / s;
+                    self.p.eta_secs = Some(self.tokens_total.saturating_sub(self.tokens_done) as f64 / rate);
+                }
             }
         }
         if force || self.last_emit.elapsed() >= Duration::from_millis(100) {
@@ -160,10 +169,13 @@ pub async fn sync_index(paths: &Paths, index_id: &str, opts: SyncOptions) -> Res
             chunks_total: 0,
             chunks_per_sec: 0.0,
             elapsed_secs: 0.0,
+            eta_secs: None,
             message: None,
         },
         start: Instant::now(),
         embed_start: None,
+        tokens_total: 0,
+        tokens_done: 0,
         cb: opts.progress.clone(),
         last_emit: Instant::now(),
     };
@@ -247,6 +259,7 @@ async fn sync_inner(
                             chunks_total: 0,
                             chunks_per_sec: 0.0,
                             elapsed_secs: 0.0,
+                            eta_secs: None,
                             message: None,
                         });
                     }
@@ -425,23 +438,35 @@ async fn sync_inner(
 
     // --- embed (length-sorted, token-budget batches) --------------------------
     let max_len = embedder::max_length_for_chunk_size(cfg.chunk_size);
-    unique.sort_by_key(|&i| chunks[i].text.len());
+    // Longest first: out-of-memory shows up immediately, and the token-based
+    // ETA is accurate from the start.
+    unique.sort_by_key(|&i| std::cmp::Reverse(chunks[i].text.len()));
     let tokens: Vec<usize> =
         unique.iter().map(|&i| crate::batching::est_tokens(chunks[i].text.len(), max_len)).collect();
     rep.p.chunks_total = unique.len();
+    rep.tokens_total = tokens.iter().sum();
 
     let mut cancelled = false;
     if !unique.is_empty() {
         let t_model = Instant::now();
         rep.phase(Phase::LoadingModel, format!("loading {}", spec.id));
-        let emb = {
+        let gpu = !matches!(app.execution_provider, crate::ExecutionProvider::Cpu);
+        let n_workers = match app.embed_workers {
+            0 if gpu => crate::batching::GPU_WORKERS,
+            0 => 1,
+            n => n.min(8),
+        };
+        let mut workers = Vec::with_capacity(n_workers);
+        for w in 0..n_workers {
             let (model, ep, dir) = (cfg.embed_model.clone(), app.execution_provider, paths.models_dir());
             let variant = cfg.model_variant(&app);
-            tokio::task::spawn_blocking(move || embedder::cached(&model, ep, &dir, max_len, variant)).await??
-        };
+            workers.push(
+                tokio::task::spawn_blocking(move || embedder::cached_worker(&model, ep, &dir, max_len, variant, w))
+                    .await??,
+            );
+        }
         report.timings.load_model = t_model.elapsed().as_secs_f64();
 
-        let gpu = !matches!(app.execution_provider, crate::ExecutionProvider::Cpu);
         let budget = Arc::new(std::sync::atomic::AtomicUsize::new(match app.embed_token_budget {
             0 if gpu => crate::batching::GPU_TOKEN_BUDGET,
             0 => crate::batching::CPU_TOKEN_BUDGET,
@@ -451,33 +476,47 @@ async fn sync_inner(
         rep.phase(Phase::Embedding, reused_msg);
         rep.embed_start = Some(Instant::now());
 
+        // Up to `n_workers` batches in flight; each worker session is used by
+        // one batch at a time. Results are written as they complete.
+        let mut inflight = futures::stream::FuturesUnordered::new();
+        let mut free: Vec<usize> = (0..workers.len()).collect();
         let mut i = 0;
-        while i < unique.len() {
-            if cancel.load(Ordering::Relaxed) {
-                cancelled = true;
-                break;
+        let embed_t0 = Instant::now();
+        loop {
+            while !cancelled && i < unique.len() && !free.is_empty() {
+                if cancel.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    break;
+                }
+                let w = free.pop().unwrap();
+                let end = crate::batching::next_batch_end(&tokens, i, budget.load(Ordering::Relaxed), app.embed_batch_size);
+                let ids: Vec<usize> = unique[i..end].to_vec();
+                let tok: usize = tokens[i..end].iter().sum();
+                let texts: Vec<String> = ids.iter().map(|&k| chunks[k].embedding_input()).collect();
+                let (e, b) = (workers[w].clone(), budget.clone());
+                inflight.push(async move {
+                    let r = tokio::task::spawn_blocking(move || embed_split(&mut e.lock().unwrap(), &texts, &b)).await;
+                    (w, ids, tok, r)
+                });
+                i = end;
             }
-            let end = crate::batching::next_batch_end(&tokens, i, budget.load(Ordering::Relaxed), app.embed_batch_size);
-            let ids: Vec<usize> = unique[i..end].to_vec();
-            let texts: Vec<String> = ids.iter().map(|&k| chunks[k].embedding_input()).collect();
-            let (e, b) = (emb.clone(), budget.clone());
-            let t = Instant::now();
-            let out = tokio::task::spawn_blocking(move || embed_split(&mut e.lock().unwrap(), &texts, &b)).await??;
-            report.timings.embed += t.elapsed().as_secs_f64();
+            let Some((w, ids, tok, r)) = futures::StreamExt::next(&mut inflight).await else { break };
+            free.push(w);
+            let out = r??;
             for (k, v) in ids.iter().zip(out) {
-                let same = &dups[hashes[*k].as_str()];
-                for &d in same {
+                for &d in &dups[hashes[*k].as_str()] {
                     pending.push(&chunks[d], &hashes[d], v.clone());
                 }
             }
             rep.p.chunks_embedded += ids.len();
+            rep.tokens_done += tok;
             report.chunks_embedded += ids.len();
             rep.emit(false);
             if pending.len() >= FLUSH_ROWS {
                 tx.send(std::mem::take(&mut pending)).await.map_err(|_| anyhow!("writer stopped"))?;
             }
-            i = end;
         }
+        report.timings.embed = embed_t0.elapsed().as_secs_f64();
     }
     if !pending.is_empty() {
         tx.send(pending).await.map_err(|_| anyhow!("writer stopped"))?;

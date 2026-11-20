@@ -14,6 +14,13 @@ const PHASE_LABEL: Record<Progress["phase"], string> = {
   error: "Error",
 };
 
+function fmtEta(secs: number): string {
+  const s = Math.ceil(secs);
+  if (s < 90) return `${s}s`;
+  const m = Math.round(s / 60);
+  return m < 90 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 function Bar({ value, total, color = "bg-indigo-500" }: { value: number; total: number; color?: string }) {
   const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;
   return (
@@ -90,9 +97,7 @@ export function ProgressDrawer({ jobs, finished, indexes, open, onToggle, onCanc
                           <span className="font-mono">
                             {p.chunks_embedded.toLocaleString()} / {p.chunks_total.toLocaleString()}
                             {p.chunks_per_sec > 0 && ` · ${p.chunks_per_sec.toFixed(1)} chunks/s`}
-                            {p.chunks_per_sec > 0 &&
-                              p.chunks_total > p.chunks_embedded &&
-                              ` · ~${Math.ceil((p.chunks_total - p.chunks_embedded) / p.chunks_per_sec)}s left`}
+                            {p.eta_secs != null && p.chunks_total > p.chunks_embedded && ` · ~${fmtEta(p.eta_secs)} left`}
                           </span>
                         </div>
                         <Bar value={p.chunks_embedded} total={p.chunks_total} />
