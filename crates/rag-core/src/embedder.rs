@@ -40,14 +40,29 @@ const RECOMMENDED: &[EmbeddingModel] = &[
     EmbeddingModel::NomicEmbedTextV15,
 ];
 
+/// Context length (tokens) each model was trained for.
 fn max_context(m: &EmbeddingModel) -> usize {
     use EmbeddingModel::*;
     match m {
-        JinaEmbeddingsV2BaseCode | JinaEmbeddingsV2BaseEN | NomicEmbedTextV1
-        | NomicEmbedTextV15 | NomicEmbedTextV15Q => 8192,
-        EmbeddingGemma300M | EmbeddingGemma300MQ | EmbeddingGemma300MQ4 => 2048,
+        JinaEmbeddingsV2BaseCode | JinaEmbeddingsV2BaseEN | NomicEmbedTextV1 | NomicEmbedTextV15
+        | NomicEmbedTextV15Q | GTEBaseENV15 | GTEBaseENV15Q | GTELargeENV15 | GTELargeENV15Q
+        | ModernBertEmbedLarge => 8192,
+        EmbeddingGemma300M | EmbeddingGemma300MQ | EmbeddingGemma300MQ4 | SnowflakeArcticEmbedMLong
+        | SnowflakeArcticEmbedMLongQ => 2048,
+        AllMpnetBaseV2 => 384,
+        AllMiniLML6V2 | AllMiniLML6V2Q | AllMiniLML12V2 | AllMiniLML12V2Q => 256,
+        ParaphraseMLMiniLML12V2 | ParaphraseMLMiniLML12V2Q | ParaphraseMLMpnetBaseV2 => 128,
+        ClipVitB32 => 77,
         _ => 512,
     }
+}
+
+/// FastEmbed's pre-quantized duplicates (`...Q`, `...Q4`). They share their
+/// repo id with the full-precision model, so they are hidden from the model
+/// list; INT8 is chosen per index (Precision) instead.
+fn is_builtin_quantized(m: &EmbeddingModel) -> bool {
+    let n = format!("{m:?}");
+    n.ends_with('Q') || n.ends_with("Q4")
 }
 
 fn display_id(m: &EmbeddingModel, code: &str) -> String {
@@ -61,6 +76,7 @@ fn display_id(m: &EmbeddingModel, code: &str) -> String {
 pub fn supported_models() -> Vec<ModelSpec> {
     let mut v: Vec<ModelSpec> = TextEmbedding::list_supported_models()
         .into_iter()
+        .filter(|info| !is_builtin_quantized(&info.model))
         .map(|info| ModelSpec {
             id: display_id(&info.model, &info.model_code),
             dim: info.dim,
@@ -86,8 +102,14 @@ pub fn resolve_model(name: &str) -> Result<EmbeddingModel> {
     if let Some((_, m)) = ALIASES.iter().find(|(a, _)| a.eq_ignore_ascii_case(n)) {
         return Ok(m.clone());
     }
+    // Repo ids are shared by full-precision and pre-quantized variants: prefer
+    // the full-precision one.
     let all = TextEmbedding::list_supported_models();
-    if let Some(info) = all.iter().find(|i| i.model_code.eq_ignore_ascii_case(n)) {
+    if let Some(info) = all
+        .iter()
+        .filter(|i| !is_builtin_quantized(&i.model))
+        .find(|i| i.model_code.eq_ignore_ascii_case(n))
+    {
         return Ok(info.model.clone());
     }
     n.parse::<EmbeddingModel>()
@@ -285,6 +307,19 @@ mod tests {
         assert_eq!(specs[0].id, "jinaai/jina-embeddings-v2-base-code");
         assert_eq!(specs[0].max_context, 8192);
         assert_eq!(model_spec("BAAI/bge-small-en-v1.5").unwrap().max_chunk_chars, 1200);
+        // No duplicate ids in the list (pre-quantized variants hidden).
+        let mut ids: Vec<_> = specs.iter().map(|s| s.id.to_ascii_lowercase()).collect();
+        let n = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "duplicate model ids in list");
+        // Shared repo id resolves to the full-precision model.
+        assert_eq!(resolve_model("Xenova/all-MiniLM-L12-v2").unwrap(), EmbeddingModel::AllMiniLML12V2);
+        assert_eq!(resolve_model("Alibaba-NLP/gte-base-en-v1.5").unwrap(), EmbeddingModel::GTEBaseENV15);
+        // Corrected context lengths.
+        assert_eq!(model_spec("Alibaba-NLP/gte-base-en-v1.5").unwrap().max_context, 8192);
+        assert_eq!(model_spec("snowflake/snowflake-arctic-embed-m-long").unwrap().max_context, 2048);
+        assert_eq!(model_spec("Xenova/all-MiniLM-L12-v2").unwrap().max_context, 256);
     }
 }
 
