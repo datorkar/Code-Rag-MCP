@@ -21,6 +21,8 @@ pub struct ModelSpec {
     /// Largest chunk size (characters) that still fits the context window.
     pub max_chunk_chars: usize,
     pub description: String,
+    /// Approximate FP32 ONNX download size.
+    pub size_gb: f32,
     /// Shown first in the GUI.
     pub recommended: bool,
 }
@@ -33,12 +35,81 @@ const ALIASES: &[(&str, EmbeddingModel)] = &[
     ("sentence-transformers/all-MiniLM-L6-v2", EmbeddingModel::AllMiniLML6V2),
 ];
 
+/// Shown first, in this order (first = default for new indexes).
+/// - jina v2 base code: trained on code + docstrings, 8k context. Default.
+/// - bge-small-en-v1.5: ~5x faster, 512 ctx; for very large codebases / laptops.
+/// - gte-base-en-v1.5: strong general retrieval, 8k context, no prefixes.
+/// - modernbert-embed-large: best quality (code in pre-training), 8k, slowest.
 const RECOMMENDED: &[EmbeddingModel] = &[
     EmbeddingModel::JinaEmbeddingsV2BaseCode,
-    EmbeddingModel::BGEBaseENV15,
     EmbeddingModel::BGESmallENV15,
-    EmbeddingModel::NomicEmbedTextV15,
+    EmbeddingModel::GTEBaseENV15,
+    EmbeddingModel::ModernBertEmbedLarge,
 ];
+
+/// Approximate FP32 ONNX size in GB (≈ parameters × 4 bytes).
+fn size_gb(m: &EmbeddingModel) -> f32 {
+    use EmbeddingModel::*;
+    match m {
+        AllMiniLML6V2 | AllMiniLML6V2Q | SnowflakeArcticEmbedXS | SnowflakeArcticEmbedXSQ => 0.09,
+        BGESmallZHV15 => 0.10,
+        AllMiniLML12V2 | AllMiniLML12V2Q | BGESmallENV15 | BGESmallENV15Q | SnowflakeArcticEmbedS
+        | SnowflakeArcticEmbedSQ => 0.13,
+        ClipVitB32 => 0.25,
+        AllMpnetBaseV2 | BGEBaseENV15 | BGEBaseENV15Q | SnowflakeArcticEmbedM | SnowflakeArcticEmbedMQ => 0.44,
+        ParaphraseMLMiniLML12V2 | ParaphraseMLMiniLML12V2Q | MultilingualE5Small => 0.47,
+        NomicEmbedTextV1 | NomicEmbedTextV15 | NomicEmbedTextV15Q | GTEBaseENV15 | GTEBaseENV15Q
+        | JinaEmbeddingsV2BaseEN | SnowflakeArcticEmbedMLong | SnowflakeArcticEmbedMLongQ => 0.55,
+        JinaEmbeddingsV2BaseCode => 0.64,
+        ParaphraseMLMpnetBaseV2 | MultilingualE5Base => 1.11,
+        EmbeddingGemma300M | EmbeddingGemma300MQ | EmbeddingGemma300MQ4 => 1.23,
+        BGELargeZHV15 => 1.30,
+        BGELargeENV15 | BGELargeENV15Q | MxbaiEmbedLargeV1 | MxbaiEmbedLargeV1Q | SnowflakeArcticEmbedL
+        | SnowflakeArcticEmbedLQ => 1.34,
+        ModernBertEmbedLarge => 1.58,
+        GTELargeENV15 | GTELargeENV15Q => 1.74,
+        MultilingualE5Large => 2.24,
+        BGEM3 => 2.27,
+    }
+}
+
+/// (query prefix, document prefix) each model was trained with.
+fn prefixes(m: &EmbeddingModel) -> (&'static str, &'static str) {
+    use EmbeddingModel::*;
+    const BGE_Q: &str = "Represent this sentence for searching relevant passages: ";
+    match m {
+        BGESmallENV15 | BGESmallENV15Q | BGEBaseENV15 | BGEBaseENV15Q | BGELargeENV15 | BGELargeENV15Q
+        | MxbaiEmbedLargeV1 | MxbaiEmbedLargeV1Q | SnowflakeArcticEmbedXS | SnowflakeArcticEmbedXSQ
+        | SnowflakeArcticEmbedS | SnowflakeArcticEmbedSQ | SnowflakeArcticEmbedM | SnowflakeArcticEmbedMQ
+        | SnowflakeArcticEmbedMLong | SnowflakeArcticEmbedMLongQ | SnowflakeArcticEmbedL
+        | SnowflakeArcticEmbedLQ => (BGE_Q, ""),
+        BGESmallZHV15 | BGELargeZHV15 => ("为这个句子生成表示以用于检索相关文章：", ""),
+        NomicEmbedTextV1 | NomicEmbedTextV15 | NomicEmbedTextV15Q | ModernBertEmbedLarge => {
+            ("search_query: ", "search_document: ")
+        }
+        MultilingualE5Small | MultilingualE5Base | MultilingualE5Large => ("query: ", "passage: "),
+        EmbeddingGemma300M | EmbeddingGemma300MQ | EmbeddingGemma300MQ4 => {
+            ("task: code retrieval | query: ", "title: none | text: ")
+        }
+        _ => ("", ""),
+    }
+}
+
+/// Document prefix changed in v3 for these models (was empty); their indexes
+/// rebuild once. Used by `IndexConfig::fingerprint`.
+pub(crate) fn has_v3_doc_prefix(model_name: &str) -> bool {
+    use EmbeddingModel::*;
+    matches!(
+        resolve_model(model_name),
+        Ok(ModernBertEmbedLarge
+            | MultilingualE5Small
+            | MultilingualE5Base
+            | MultilingualE5Large
+            | EmbeddingGemma300M
+            | EmbeddingGemma300MQ
+            | EmbeddingGemma300MQ4)
+    )
+}
 
 /// Context length (tokens) each model was trained for.
 fn max_context(m: &EmbeddingModel) -> usize {
@@ -83,15 +154,23 @@ pub fn supported_models() -> Vec<ModelSpec> {
             max_context: max_context(&info.model),
             max_chunk_chars: max_chunk_chars(max_context(&info.model)),
             description: info.description.clone(),
+            size_gb: size_gb(&info.model),
             recommended: RECOMMENDED.contains(&info.model),
         })
         .collect();
-    v.sort_by_key(|s| {
-        let rank = RECOMMENDED
-            .iter()
-            .position(|r| resolve_model(&s.id).ok().as_ref() == Some(r))
-            .unwrap_or(usize::MAX);
-        (rank, s.id.clone())
+    // Recommended first (fixed order), then by context and size, ascending.
+    v.sort_by(|a, b| {
+        let rank = |s: &ModelSpec| {
+            RECOMMENDED
+                .iter()
+                .position(|r| resolve_model(&s.id).ok().as_ref() == Some(r))
+                .unwrap_or(usize::MAX)
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then(a.max_context.cmp(&b.max_context))
+            .then(a.size_gb.total_cmp(&b.size_gb))
+            .then_with(|| a.id.cmp(&b.id))
     });
     v
 }
@@ -125,6 +204,7 @@ pub fn model_spec(name: &str) -> Result<ModelSpec> {
         max_context: max_context(&model),
         max_chunk_chars: max_chunk_chars(max_context(&model)),
         description: info.description.clone(),
+        size_gb: size_gb(&model),
         recommended: RECOMMENDED.contains(&model),
     })
 }
@@ -137,6 +217,7 @@ pub struct Embedder {
     /// The ONNX variant actually in use.
     pub variant: ModelVariant,
     query_prefix: &'static str,
+    doc_prefix: &'static str,
 }
 
 impl Embedder {
@@ -199,20 +280,14 @@ impl Embedder {
             None => TextEmbedding::try_new(opts)
                 .with_context(|| format!("initialising embedding model {}", spec.id))?,
         };
-        let query_prefix = if spec.id.to_ascii_lowercase().contains("bge-") {
-            "Represent this sentence for searching relevant passages: "
-        } else if spec.id.to_ascii_lowercase().contains("nomic") {
-            "search_query: "
-        } else {
-            ""
-        };
-        Ok(Self { model: te, spec, variant: loaded, query_prefix })
+        let (query_prefix, doc_prefix) = prefixes(&model);
+        Ok(Self { model: te, spec, variant: loaded, query_prefix, doc_prefix })
     }
 
     pub fn embed_documents(&mut self, texts: &[String], batch: usize) -> Result<Vec<Vec<f32>>> {
         let docs: Vec<String>;
-        let input: &[String] = if self.spec.id.to_ascii_lowercase().contains("nomic") {
-            docs = texts.iter().map(|t| format!("search_document: {t}")).collect();
+        let input: &[String] = if !self.doc_prefix.is_empty() {
+            docs = texts.iter().map(|t| format!("{}{t}", self.doc_prefix)).collect();
             &docs
         } else {
             texts
@@ -320,6 +395,10 @@ mod tests {
         assert_eq!(model_spec("Alibaba-NLP/gte-base-en-v1.5").unwrap().max_context, 8192);
         assert_eq!(model_spec("snowflake/snowflake-arctic-embed-m-long").unwrap().max_context, 2048);
         assert_eq!(model_spec("Xenova/all-MiniLM-L12-v2").unwrap().max_context, 256);
+        // Non-recommended: context ascending, then size ascending.
+        let rest: Vec<_> = specs.iter().filter(|s| !s.recommended).collect();
+        assert!(rest.windows(2).all(|w| (w[0].max_context, w[0].size_gb) <= (w[1].max_context, w[1].size_gb)));
+        assert_eq!(specs.iter().filter(|s| s.recommended).count(), 4);
     }
 }
 

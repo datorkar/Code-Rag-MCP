@@ -54,7 +54,7 @@ export function SettingsModal({
           >
             {models.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.id} [{m.max_context} ctx]
+                {m.id} [{m.max_context} ctx · {m.size_gb.toFixed(2)} GB]
               </option>
             ))}
           </select>

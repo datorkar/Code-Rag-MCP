@@ -38,6 +38,7 @@ export interface ModelSpec {
   max_context: number;
   max_chunk_chars: number;
   description: string;
+  size_gb: number;
   recommended: boolean;
 }
 

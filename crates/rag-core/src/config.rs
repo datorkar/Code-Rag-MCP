@@ -251,7 +251,9 @@ impl IndexConfig {
         // FP32 and FP16 produce the same vectors, so only INT8 is a separate
         // class (switching to/from it rebuilds the index).
         let class = if self.precision == Precision::Int8 { "|int8" } else { "" };
-        format!("v2|{}|{}|{}{class}", self.embed_model, self.chunk_size, self.chunk_overlap)
+        // Models that gained a document prefix rebuild once.
+        let dp = if crate::embedder::has_v3_doc_prefix(&self.embed_model) { "|dp" } else { "" };
+        format!("v2|{}|{}|{}{class}{dp}", self.embed_model, self.chunk_size, self.chunk_overlap)
     }
 }
 
