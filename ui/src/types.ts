@@ -136,3 +136,31 @@ export interface WinmlProgress {
   ok: boolean;
   message: string | null;
 }
+
+export interface ExportMeta {
+  format: number;
+  app_version: string;
+  chunker_version: number;
+  created_at: string;
+  label: string | null;
+  index: IndexConfig;
+  chunk_count: number;
+  file_count: number;
+  dim: number;
+}
+
+export interface ExportReport {
+  path: string;
+  bytes: number;
+  chunks: number;
+  secs: number;
+}
+
+export interface ImportReport {
+  index_id: string;
+  chunks: number;
+  files: number;
+  files_rejected: number;
+  warnings: string[];
+  secs: number;
+}

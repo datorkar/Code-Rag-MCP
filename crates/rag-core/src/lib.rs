@@ -12,6 +12,7 @@ pub mod lock;
 pub mod manifest;
 pub mod paths;
 pub mod runtime;
+pub mod share;
 pub mod snippet;
 pub mod store;
 pub mod sync;

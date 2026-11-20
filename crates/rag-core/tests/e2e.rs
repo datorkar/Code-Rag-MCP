@@ -199,3 +199,77 @@ async fn int8_index_builds_and_searches() {
     let out = engine.search("q", "take damage and die", 1, false).await.unwrap();
     assert_eq!(out.hits[0].path, "Health.cpp", "{:#?}", out.hits);
 }
+
+/// Export an index, import it elsewhere against a slightly different copy of
+/// the source: matching files are reused, the changed file is rejected and
+/// re-embedded, the deleted file is dropped.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn export_import_roundtrip() {
+    use rag_core::share;
+    let link_models = |e: &Engine| {
+        #[cfg(unix)]
+        if let Ok(m) = std::env::var("RAG_TEST_MODELS") {
+            std::fs::remove_dir_all(e.paths.models_dir()).ok();
+            std::os::unix::fs::symlink(m, e.paths.models_dir()).unwrap();
+        }
+    };
+    let (data_a, data_b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (src_a, src_b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let a = Engine::with_paths(Paths::at(data_a.path()).unwrap());
+    let b = Engine::with_paths(Paths::at(data_b.path()).unwrap());
+    link_models(&a);
+    link_models(&b);
+    for e in [&a, &b] {
+        e.update_settings(|c| c.reranker_model = None).unwrap();
+    }
+    let files = [
+        ("Health.cpp", "void UHealthComponent::ApplyDamage(float Amount)\n{\n    Health -= Amount;\n}\n"),
+        ("Inventory.cpp", "void UInventory::AddItem(const FItem& Item)\n{\n    Items.Add(Item);\n}\n"),
+        ("Stamina.cpp", "void UStamina::Drain(float Dt)\n{\n    Stamina -= DrainRate * Dt;\n}\n"),
+    ];
+    for (n, t) in files {
+        std::fs::write(src_a.path().join(n), t).unwrap();
+        std::fs::write(src_b.path().join(n), t).unwrap();
+    }
+    a.save_index(
+        IndexConfig {
+            id: "src".into(),
+            name: "Source".into(),
+            root_path: src_a.path().to_string_lossy().into(),
+            embed_model: "BAAI/bge-small-en-v1.5".into(),
+            allowed_extensions: vec![".cpp".into()],
+            chunk_size: 400,
+            chunk_overlap: 40,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    a.sync("src", SyncOptions::default()).await.unwrap();
+
+    let out = data_a.path().join("src.lcrag");
+    let rep = share::export_index(&a.paths, "src", &out, Some("test source v1".into())).await.unwrap();
+    assert_eq!(rep.chunks, 3);
+    let meta = share::inspect(&out).unwrap();
+    assert_eq!(meta.label.as_deref(), Some("test source v1"));
+    assert!(meta.index.root_path.is_empty());
+
+    // Importer's copy differs: one file edited, one deleted.
+    std::fs::write(src_b.path().join("Stamina.cpp"), "void UStamina::Regen(float Dt)\n{\n    Stamina += RegenRate * Dt;\n}\n").unwrap();
+    std::fs::remove_file(src_b.path().join("Inventory.cpp")).unwrap();
+    let imp = share::import_index(&b.paths, &out, &src_b.path().to_string_lossy(), "shared", None).await.unwrap();
+    assert_eq!(imp.files_rejected, 2, "{imp:?}"); // edited + deleted
+    assert_eq!(imp.chunks, 1);
+
+    // Normal sync: only the edited file is embedded, Health.cpp is reused as-is.
+    let r = b.sync("shared", SyncOptions::default()).await.unwrap();
+    assert!(!r.full_rebuild, "{r:?}");
+    assert_eq!(r.files_added, 1, "{r:?}"); // Stamina.cpp (rejected on import)
+    assert_eq!(r.chunks_embedded, 1, "{r:?}");
+    let hits = b.search("shared", "take damage", 1, false).await.unwrap().hits;
+    assert_eq!(hits[0].path, "Health.cpp");
+    let hits = b.search("shared", "stamina regeneration", 1, false).await.unwrap().hits;
+    assert_eq!(hits[0].path, "Stamina.cpp");
+    assert!(hits[0].text.contains("Regen"));
+}

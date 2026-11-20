@@ -424,6 +424,39 @@ fn agents_snippet(state: State<'_, AppState>, index_id: String) -> CmdResult<Str
 }
 
 #[tauri::command]
+async fn export_index(
+    state: State<'_, AppState>,
+    index_id: String,
+    path: String,
+    label: Option<String>,
+) -> CmdResult<rag_core::share::ExportReport> {
+    rag_core::share::export_index(&state.engine.paths, &index_id, std::path::Path::new(&path), label)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn inspect_export(path: String) -> CmdResult<rag_core::share::ExportMeta> {
+    tauri::async_runtime::spawn_blocking(move || rag_core::share::inspect(std::path::Path::new(&path)))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn import_index(
+    state: State<'_, AppState>,
+    path: String,
+    root_path: String,
+    index_id: String,
+    name: Option<String>,
+) -> CmdResult<rag_core::share::ImportReport> {
+    rag_core::share::import_index(&state.engine.paths, std::path::Path::new(&path), &root_path, &index_id, name)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 async fn register_claude_mcp() -> CmdResult<String> {
     let exe = mcp_exe_path();
     if !exe.exists() {
@@ -486,6 +519,9 @@ pub fn run() {
             agents_snippet,
             register_claude_mcp,
             gpu_status,
+            export_index,
+            inspect_export,
+            import_index,
             winml_install,
             winml_cancel,
         ])
