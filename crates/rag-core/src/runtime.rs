@@ -215,6 +215,21 @@ pub fn info() -> Result<RuntimeInfo> {
     })
 }
 
+/// Whether a GPU execution path may exist. Windows ML builds know their
+/// devices (DirectML lists the GPU); bundled builds can only tell whether CUDA
+/// support was compiled in (CUDA itself may still be missing at runtime, in
+/// which case FP16 runs on CPU, slightly slower).
+pub fn gpu_available() -> bool {
+    #[cfg(feature = "winml")]
+    {
+        info().map(|i| i.devices.iter().any(|d| d.kind == "gpu")).unwrap_or(false)
+    }
+    #[cfg(not(feature = "winml"))]
+    {
+        cfg!(feature = "cuda")
+    }
+}
+
 fn is_builtin_ep(ep: &str) -> bool {
     matches!(ep, "CPUExecutionProvider" | "DmlExecutionProvider")
 }

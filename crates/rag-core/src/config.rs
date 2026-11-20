@@ -30,12 +30,11 @@ pub enum ExecutionProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Precision {
-    /// FP16 on GPU when the global "half precision" setting is on, else FP32.
+    /// FP16 on GPU (same results as FP32, faster), FP32 on CPU. Older configs'
+    /// `auto` / `fp32` / `fp16` map here.
     #[default]
-    Auto,
-    Fp32,
-    /// Same results as FP32; faster on GPU, ignored (FP32) on CPU.
-    Fp16,
+    #[serde(alias = "auto", alias = "fp32", alias = "fp16")]
+    Standard,
     /// Dynamically quantized INT8 (`model_quantized.onnx`): ~1.4x faster on
     /// CPU, ~10% of top results differ from FP32. Best on CPU.
     Int8,
@@ -73,10 +72,10 @@ pub struct AppConfig {
     /// Approximate tokens per batch (batch size x longest chunk). 0 = auto:
     /// 32768 on GPU, 8192 on CPU. Halved automatically on out-of-memory.
     pub embed_token_budget: usize,
-    /// Use the FP16 ONNX variants on GPU (same results, ~1.5-2x faster on most
-    /// GPUs; ignored on CPU where FP16 is slower). `LOCAL_CODE_RAG_FP16=1|0`
+    /// Troubleshooting: never use the FP16 models on GPU (e.g. GPUs with slow
+    /// FP16 such as GTX 10-series, or driver issues). `LOCAL_CODE_RAG_FP16=0|1`
     /// overrides this.
-    pub half_precision: bool,
+    pub force_fp32: bool,
     /// Cross-encoder used to re-score hybrid results (`None` = disabled).
     #[serde(default = "default_reranker")]
     pub reranker_model: Option<String>,
@@ -101,7 +100,7 @@ impl Default for AppConfig {
             execution_provider: ExecutionProvider::Auto,
             embed_batch_size: 0,
             embed_token_budget: 0,
-            half_precision: false,
+            force_fp32: false,
             reranker_model: Some(DEFAULT_RERANKER.into()),
             rerank_candidates: 30,
             auto_sync_max_files: 200,
@@ -147,7 +146,7 @@ impl Default for IndexConfig {
             chunk_size: 2000,
             chunk_overlap: 200,
             max_file_bytes: 2 * 1024 * 1024,
-            precision: Precision::Auto,
+            precision: Precision::Standard,
             auto_update_on_search: true,
             auto_update_cooldown_hours: 24.0,
             last_indexed_at: None,
@@ -205,12 +204,10 @@ impl IndexConfig {
 
     /// The model file to load for this index under the given app settings.
     pub fn model_variant(&self, app: &AppConfig) -> ModelVariant {
-        let gpu = app.execution_provider != ExecutionProvider::Cpu;
         match self.precision {
             Precision::Int8 => ModelVariant::Int8,
-            Precision::Fp16 if gpu => ModelVariant::Fp16,
-            Precision::Auto if app.fp16_enabled() => ModelVariant::Fp16,
-            _ => ModelVariant::Fp32,
+            Precision::Standard if app.fp16_enabled() => ModelVariant::Fp16,
+            Precision::Standard => ModelVariant::Fp32,
         }
     }
 
@@ -275,15 +272,15 @@ impl AppConfig {
         Ok(out)
     }
 
-    /// Whether FP16 models should be used: setting or `LOCAL_CODE_RAG_FP16`
-    /// env override, and only for GPU execution providers.
+    /// Whether FP16 models are used: on by default for GPU execution providers
+    /// (unless `force_fp32`); `LOCAL_CODE_RAG_FP16=1|0` overrides. Never on CPU.
     pub fn fp16_enabled(&self) -> bool {
         let wanted = match std::env::var("LOCAL_CODE_RAG_FP16").ok().as_deref().map(str::trim) {
             Some("1") | Some("true") | Some("on") => true,
             Some("0") | Some("false") | Some("off") => false,
-            _ => self.half_precision,
+            _ => !self.force_fp32,
         };
-        wanted && self.execution_provider != ExecutionProvider::Cpu
+        wanted && self.execution_provider != ExecutionProvider::Cpu && crate::runtime::gpu_available()
     }
 
     pub fn index(&self, id: &str) -> Option<&IndexConfig> {
@@ -317,25 +314,33 @@ mod precision_tests {
     fn fingerprint_only_changes_for_int8() {
         let mut ix = IndexConfig { id: "a".into(), root_path: "x".into(), ..Default::default() };
         let base = ix.fingerprint();
-        ix.precision = Precision::Fp16;
-        assert_eq!(ix.fingerprint(), base, "fp16 is interchangeable with fp32");
         ix.precision = Precision::Int8;
         assert_ne!(ix.fingerprint(), base, "int8 needs a rebuild");
     }
 
     #[test]
+    fn old_precision_values_map_to_standard() {
+        for v in ["auto", "fp32", "fp16", "standard"] {
+            let p: Precision = serde_json::from_str(&format!("\"{v}\"")).unwrap();
+            assert_eq!(p, Precision::Standard, "{v}");
+        }
+        let p: Precision = serde_json::from_str("\"int8\"").unwrap();
+        assert_eq!(p, Precision::Int8);
+    }
+
+    #[test]
     fn variant_selection() {
+        // Env override must not leak in from the test environment.
+        std::env::remove_var("LOCAL_CODE_RAG_FP16");
         let mut app = AppConfig { execution_provider: ExecutionProvider::Cpu, ..Default::default() };
-        let mut ix = IndexConfig { precision: Precision::Fp16, ..Default::default() };
-        assert_eq!(ix.model_variant(&app), ModelVariant::Fp32, "fp16 ignored on CPU");
+        let mut ix = IndexConfig::default();
+        assert_eq!(ix.model_variant(&app), ModelVariant::Fp32, "FP32 on CPU");
         app.execution_provider = ExecutionProvider::Gpu;
-        assert_eq!(ix.model_variant(&app), ModelVariant::Fp16);
+        let gpu_variant = if crate::runtime::gpu_available() { ModelVariant::Fp16 } else { ModelVariant::Fp32 };
+        assert_eq!(ix.model_variant(&app), gpu_variant, "FP16 by default on GPU");
+        app.force_fp32 = true;
+        assert_eq!(ix.model_variant(&app), ModelVariant::Fp32, "force_fp32");
         ix.precision = Precision::Int8;
         assert_eq!(ix.model_variant(&app), ModelVariant::Int8);
-        ix.precision = Precision::Auto;
-        app.half_precision = true;
-        assert_eq!(ix.model_variant(&app), ModelVariant::Fp16);
-        app.half_precision = false;
-        assert_eq!(ix.model_variant(&app), ModelVariant::Fp32);
     }
 }

@@ -164,13 +164,11 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
 
         <div className="col-span-2">
           <label className="label">Precision</label>
-          <div className="grid grid-cols-4 gap-1">
+          <div className="grid grid-cols-2 gap-1">
             {(
               [
-                ["auto", "Auto", "FP16 on GPU if enabled in Settings, else FP32"],
-                ["fp32", "FP32", "Reference quality"],
-                ["fp16", "FP16", "Same results, faster on GPU (FP32 on CPU)"],
-                ["int8", "INT8", "~1.4x faster on CPU, ~10% of top results differ"],
+                ["standard", "Standard", "FP16 on GPU, FP32 on CPU — full quality"],
+                ["int8", "INT8 (fast CPU)", "~1.4x faster on CPU, ~10% of top results differ"],
               ] as const
             ).map(([value, label, hint]) => (
               <button
@@ -185,14 +183,9 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
             ))}
           </div>
           <p className="mt-1 text-xs text-zinc-500">
-            {
-              {
-                auto: "FP16 on GPU when “Half precision” is on in Settings, otherwise FP32.",
-                fp32: "Full precision: reference search quality.",
-                fp16: "Identical results to FP32 (measured), faster on GPU. Uses FP32 on CPU.",
-                int8: "Quantized model: ~1.4x faster on CPU, but ~10% of top results differ from FP32. Best for big read-only indexes on CPU. Switching to/from INT8 rebuilds the index.",
-              }[ix.precision]
-            }
+            {ix.precision === "int8"
+              ? "Quantized model: ~1.4x faster on CPU, but ~10% of top results differ from full precision. Best for big read-only indexes on CPU. Switching to/from INT8 rebuilds the index."
+              : "Full quality: FP16 on GPU (identical results, faster) and FP32 on CPU, chosen automatically."}
           </p>
         </div>
 

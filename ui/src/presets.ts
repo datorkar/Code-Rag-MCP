@@ -25,7 +25,7 @@ export const DEFAULT_INDEX = {
   chunk_size: 2000,
   chunk_overlap: 200,
   max_file_bytes: 2 * 1024 * 1024,
-  precision: "auto" as const,
+  precision: "standard" as const,
   auto_update_on_search: true,
   auto_update_cooldown_hours: 24,
   last_indexed_at: null,

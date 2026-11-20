@@ -113,16 +113,15 @@ export function SettingsModal({
             <input
               type="checkbox"
               className="accent-indigo-500"
-              checked={s.half_precision}
-              disabled={s.execution_provider === "cpu"}
-              onChange={(e) => setS({ ...s, half_precision: e.target.checked })}
+              checked={s.force_fp32}
+              onChange={(e) => setS({ ...s, force_fp32: e.target.checked })}
             />
-            Half precision (FP16) on GPU
+            Force FP32 (troubleshooting)
           </label>
           <p className="mt-1 text-xs text-zinc-500">
-            Uses the models' FP16 versions: typically 1.5–2x faster on GPU with the same search results. Ignored on CPU
-            (FP16 is slower there). Downloads the FP16 model files on first use. Env override:{" "}
-            <code className="font-mono">LOCAL_CODE_RAG_FP16=1|0</code>.
+            By default models run in FP16 on GPU (same results, faster) and FP32 on CPU. Tick this only if your GPU is
+            slow at FP16 (e.g. GTX 10-series) or shows errors. Env override:{" "}
+            <code className="font-mono">LOCAL_CODE_RAG_FP16=0|1</code>.
           </p>
         </div>
         <div className="border-t border-zinc-800 pt-4">

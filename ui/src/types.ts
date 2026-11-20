@@ -1,5 +1,5 @@
 export type ExecutionProvider = "auto" | "gpu" | "npu" | "cuda" | "directml" | "cpu";
-export type Precision = "auto" | "fp32" | "fp16" | "int8";
+export type Precision = "standard" | "int8";
 export type IndexStatus = "ready" | "indexing" | "stale" | "never_indexed";
 
 export interface IndexConfig {
@@ -44,7 +44,7 @@ export interface GlobalSettings {
   execution_provider: ExecutionProvider;
   embed_batch_size: number;
   embed_token_budget: number;
-  half_precision: boolean;
+  force_fp32: boolean;
   reranker_model: string | null;
   rerank_candidates: number;
   auto_sync_max_files: number;
