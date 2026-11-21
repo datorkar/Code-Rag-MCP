@@ -78,7 +78,7 @@ impl Engine {
     pub fn status(&self, ix: &IndexConfig) -> (IndexStatus, bool) {
         let lock = self.paths.lock_file(&ix.id);
         let busy = matches!(FileLock::try_exclusive(&lock), Ok(None));
-        let manifest_fp = Manifest::load(&self.paths, &ix.id).map(|m| m.fingerprint).unwrap_or_default();
+        let manifest_fp = Manifest::load_fingerprint(&self.paths, &ix.id);
         let needs_rebuild = ix.last_indexed_at.is_some() && manifest_fp != ix.fingerprint();
         let status = if busy {
             IndexStatus::Indexing

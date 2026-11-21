@@ -80,11 +80,19 @@ fn write_block(w: &mut impl Write, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Export paths must stay inside the import root: relative, no `..`, no
+/// drive/UNC prefix.
+fn is_safe_rel(p: &str) -> bool {
+    use std::path::Component;
+    !p.is_empty() && Path::new(p).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+        && !p.starts_with('/') && !p.starts_with('\\') && !p.contains(':')
+}
+
 fn read_block(r: &mut impl Read) -> Result<Vec<u8>> {
     let mut len = [0u8; 8];
     r.read_exact(&mut len)?;
     let len = u64::from_le_bytes(len);
-    if len > 4 << 30 {
+    if len > 1 << 30 {
         bail!("corrupt export (block of {len} bytes)");
     }
     let mut buf = vec![0u8; len as usize];
@@ -221,6 +229,9 @@ pub async fn import_index(
     let mut r = open_reader(file)?;
     let meta = read_meta(&mut r)?;
     let manifest: Manifest = serde_json::from_slice(&read_block(&mut r)?).context("reading export manifest")?;
+    if let Some(bad) = manifest.files.keys().find(|p| !is_safe_rel(p)) {
+        bail!("export contains an unsafe file path '{bad}'");
+    }
     let mut warnings = Vec::new();
     if meta.chunker_version != CHUNKER_VERSION {
         warnings.push(format!(
@@ -262,6 +273,9 @@ pub async fn import_index(
         let path_col = b.column_by_name("path").context("path column")?.as_string::<i32>().clone();
         let text_col = b.column_by_name("text").context("text column")?.as_string::<i32>().clone();
         for i in 0..b.num_rows() {
+            if !path_col.is_null(i) && !is_safe_rel(path_col.value(i)) {
+                bail!("export contains an unsafe file path '{}'", path_col.value(i));
+            }
             if !path_col.is_null(i) {
                 texts.entry(path_col.value(i).to_string()).or_default().push(text_col.value(i).to_string());
             }
@@ -317,4 +331,19 @@ pub async fn import_index(
         warnings,
         secs: t0.elapsed().as_secs_f64(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_safe_rel;
+
+    #[test]
+    fn rejects_paths_outside_root() {
+        for ok in ["src/main.rs", "a/b/c.cpp", "./x.h"] {
+            assert!(is_safe_rel(ok), "{ok}");
+        }
+        for bad in ["", "../x", "a/../../x", "/etc/passwd", "C:\\Windows\\x", "C:x", "\\\\srv\\share\\x"] {
+            assert!(!is_safe_rel(bad), "{bad}");
+        }
+    }
 }

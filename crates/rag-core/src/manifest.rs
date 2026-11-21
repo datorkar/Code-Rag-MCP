@@ -36,6 +36,35 @@ impl Manifest {
         }
     }
 
+    /// Only the stored fingerprint (status checks poll this). Cached by file
+    /// size + mtime so large manifests are not re-parsed every poll.
+    pub fn load_fingerprint(paths: &Paths, index_id: &str) -> String {
+        use std::sync::{Mutex, OnceLock};
+        type Key = (std::time::SystemTime, u64);
+        static CACHE: OnceLock<Mutex<std::collections::HashMap<std::path::PathBuf, (Key, String)>>> = OnceLock::new();
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct FpOnly {
+            fingerprint: String,
+        }
+        let file = paths.manifest_file(index_id);
+        let Ok(meta) = std::fs::metadata(&file) else { return String::new() };
+        let key = (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len());
+        let cache = CACHE.get_or_init(Default::default);
+        if let Some((k, fp)) = cache.lock().unwrap().get(&file) {
+            if *k == key {
+                return fp.clone();
+            }
+        }
+        let fp = std::fs::read(&file)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<FpOnly>(&b).ok())
+            .map(|m| m.fingerprint)
+            .unwrap_or_default();
+        cache.lock().unwrap().insert(file, (key, fp.clone()));
+        fp
+    }
+
     pub fn save(&self, paths: &Paths, index_id: &str) -> Result<()> {
         write_atomic(&paths.manifest_file(index_id), &serde_json::to_vec(self)?)
     }

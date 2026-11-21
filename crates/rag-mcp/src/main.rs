@@ -212,6 +212,17 @@ async fn main() -> anyhow::Result<()> {
         tracing::error!("ONNX Runtime unavailable: {e:#}");
     }
     let engine = Engine::new()?;
+    // Free model RAM/VRAM when Claude has not searched for a while; the next
+    // search reloads it (a few seconds).
+    tokio::spawn(async {
+        let idle = std::time::Duration::from_secs(15 * 60);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            if rag_core::embedder::unload_if_idle(idle) {
+                tracing::info!("unloaded idle models");
+            }
+        }
+    });
     tracing::info!("rag-mcp starting; data dir {}", engine.paths.root().display());
     let service = RagServer::new(engine).serve(stdio()).await?;
     service.waiting().await?;

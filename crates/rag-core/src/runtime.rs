@@ -115,7 +115,18 @@ fn build_state() -> Result<State> {
 
 /// Initialise ORT once per process. Safe to call repeatedly.
 pub fn init() -> Result<()> {
+    harden_dll_search();
     state().map(|_| ())
+}
+
+/// Remove the current directory from the DLL search order (DLL-planting
+/// hardening). All runtime DLLs are loaded by absolute path.
+fn harden_dll_search() {
+    #[cfg(windows)]
+    unsafe {
+        let empty: [u16; 1] = [0];
+        windows_sys::Win32::System::LibraryLoader::SetDllDirectoryW(empty.as_ptr());
+    }
 }
 
 fn state() -> Result<&'static State> {

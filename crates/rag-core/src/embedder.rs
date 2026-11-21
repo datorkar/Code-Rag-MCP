@@ -322,6 +322,36 @@ pub fn clear_caches() {
     }
 }
 
+static LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn touch() {
+    LAST_USE.store(now_secs(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Drop the extra per-worker sessions (worker > 0) after a sync; worker 0
+/// stays loaded for searches.
+pub fn drop_worker_sessions() {
+    if let Some(c) = EMBEDDERS.get() {
+        c.lock().unwrap().retain(|k, _| k.ends_with("|w0"));
+    }
+}
+
+/// Unload every model if none was used for `idle`. Sessions still held by a
+/// running sync stay alive until it finishes. Returns true if anything was unloaded.
+pub fn unload_if_idle(idle: std::time::Duration) -> bool {
+    let empty = EMBEDDERS.get().is_none_or(|c| c.lock().unwrap().is_empty())
+        && RERANKERS.get().is_none_or(|c| c.lock().unwrap().is_empty());
+    if empty || now_secs().saturating_sub(LAST_USE.load(std::sync::atomic::Ordering::Relaxed)) < idle.as_secs() {
+        return false;
+    }
+    clear_caches();
+    true
+}
+
 /// Process-wide cache so the MCP server does not reload ONNX sessions per call.
 pub fn cached(
     model_name: &str,
@@ -345,6 +375,7 @@ pub fn cached_worker(
     threads: Option<usize>,
     worker: usize,
 ) -> Result<SharedEmbedder> {
+    touch();
     let key = format!("{}|{ep:?}|{max_length}|{variant:?}|t{threads:?}|w{worker}", model_name.to_ascii_lowercase());
     let cache = EMBEDDERS.get_or_init(Default::default);
     if let Some(e) = cache.lock().unwrap().get(&key) {
@@ -424,6 +455,7 @@ pub fn resolve_reranker(name: &str) -> Result<RerankerModel> {
 pub type SharedReranker = Arc<Mutex<TextRerank>>;
 
 pub fn cached_reranker(name: &str, ep: ExecutionProvider, cache_dir: &Path, fp16: bool) -> Result<SharedReranker> {
+    touch();
     let key = format!("{}|{ep:?}|fp16={fp16}", name.to_ascii_lowercase());
     let cache = RERANKERS.get_or_init(Default::default);
     if let Some(r) = cache.lock().unwrap().get(&key) {

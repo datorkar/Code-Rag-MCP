@@ -40,7 +40,12 @@ export default function App() {
     refresh();
     api.listModels().then(setModels);
     api.getSettings().then(setSettings);
-    const timer = setInterval(refresh, 15000); // pick up MCP-side auto-syncs
+    // Pick up MCP-side auto-syncs; skip while the window is hidden/minimised.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refresh();
+    }, 15000);
+    const onVisible = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onVisible);
     const un1 = listen<Progress>("index-progress", (e) => {
       const p = e.payload;
       if (p.phase === "done" || p.phase === "cancelled" || p.phase === "error") return;
@@ -54,6 +59,7 @@ export default function App() {
     });
     return () => {
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
       un1.then((f) => f());
       un2.then((f) => f());
     };

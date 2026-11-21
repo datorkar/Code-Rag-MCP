@@ -209,6 +209,8 @@ pub async fn sync_index(paths: &Paths, index_id: &str, opts: SyncOptions) -> Res
     let _priority = (AppConfig::load(paths).map(|c| c.resource_mode != crate::config::ResourceMode::Max).unwrap_or(true))
         .then(crate::runtime::BackgroundPriority::enter);
     let result = sync_inner(paths, index_id, &opts, &mut rep).await;
+    // Free the extra GPU/CPU sessions used for parallel batches.
+    embedder::drop_worker_sessions();
     match &result {
         Ok(r) => rep.phase(
             Phase::Done,

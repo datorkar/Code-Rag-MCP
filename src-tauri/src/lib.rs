@@ -199,7 +199,15 @@ fn start_index(
             },
         };
         let state = app.state::<AppState>();
-        state.jobs.lock().unwrap().remove(&index_id);
+        let idle = {
+            let mut jobs = state.jobs.lock().unwrap();
+            jobs.remove(&index_id);
+            jobs.is_empty()
+        };
+        if idle {
+            // The manager never searches: release model sessions (RAM/VRAM).
+            rag_core::embedder::clear_caches();
+        }
         let _ = app.emit("index-finished", ev);
     });
     Ok(())
@@ -399,20 +407,30 @@ fn claude_snippets(state: State<'_, AppState>) -> CmdResult<ClaudeSnippets> {
     })
 }
 
+/// Find `claude` on PATH (on Windows also `claude.exe` / `claude.cmd`, the
+/// npm shim), so it is started directly rather than through a shell.
+fn find_claude() -> Option<PathBuf> {
+    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd", "claude.bat"] } else { &["claude"] };
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .filter(|d| d.is_absolute())
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .find(|p| p.is_file())
+}
+
 fn claude_cmd(args: &[&str]) -> std::io::Result<std::process::Output> {
-    // `claude` is usually an npm .cmd shim on Windows, which CreateProcess cannot run directly.
+    let exe = find_claude()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "`claude` not found on PATH"))?;
+    let mut c = std::process::Command::new(exe);
+    c.args(args);
     #[cfg(windows)]
     {
+        // Rust escapes arguments for .cmd/.bat targets safely (and refuses
+        // ones it cannot escape), so no `cmd /C` string is built here.
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg("claude").args(args).creation_flags(CREATE_NO_WINDOW);
-        c.output()
+        c.creation_flags(CREATE_NO_WINDOW);
     }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("claude").args(args).output()
-    }
+    c.output()
 }
 
 /// Paste-ready AGENTS.md / CLAUDE.md paragraph for one index.
