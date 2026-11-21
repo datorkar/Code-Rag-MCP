@@ -150,7 +150,7 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
                 .filter((m) => m.recommended)
                 .map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id} [{m.max_context} ctx · {m.size_gb.toFixed(2)} GB]
+                    {m.id} [{m.dim}d · {m.max_context} ctx · {m.size_gb.toFixed(2)} GB]
                   </option>
                 ))}
             </optgroup>
@@ -159,7 +159,7 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
                 .filter((m) => !m.recommended)
                 .map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id} [{m.max_context} ctx · {m.size_gb.toFixed(2)} GB]
+                    {m.id} [{m.dim}d · {m.max_context} ctx · {m.size_gb.toFixed(2)} GB]
                   </option>
                 ))}
             </optgroup>

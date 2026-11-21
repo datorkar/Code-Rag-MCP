@@ -47,25 +47,28 @@ const RECOMMENDED: &[EmbeddingModel] = &[
     EmbeddingModel::ModernBertEmbedLarge,
 ];
 
-/// Approximate FP32 ONNX size in GB (≈ parameters × 4 bytes).
+/// Download size in GB. From FastEmbed's supported-models page where the repo
+/// matches the one the Rust crate loads; otherwise ≈ FP32 parameters × 4 bytes.
 fn size_gb(m: &EmbeddingModel) -> f32 {
     use EmbeddingModel::*;
     match m {
-        AllMiniLML6V2 | AllMiniLML6V2Q | SnowflakeArcticEmbedXS | SnowflakeArcticEmbedXSQ => 0.09,
-        BGESmallZHV15 => 0.10,
+        AllMiniLML6V2 | AllMiniLML6V2Q | SnowflakeArcticEmbedXS | SnowflakeArcticEmbedXSQ | BGESmallZHV15 => 0.09,
         AllMiniLML12V2 | AllMiniLML12V2Q | BGESmallENV15 | BGESmallENV15Q | SnowflakeArcticEmbedS
         | SnowflakeArcticEmbedSQ => 0.13,
         ClipVitB32 => 0.25,
-        AllMpnetBaseV2 | BGEBaseENV15 | BGEBaseENV15Q | SnowflakeArcticEmbedM | SnowflakeArcticEmbedMQ => 0.44,
+        SnowflakeArcticEmbedM | SnowflakeArcticEmbedMQ => 0.43,
+        AllMpnetBaseV2 | BGEBaseENV15 | BGEBaseENV15Q => 0.44,
         ParaphraseMLMiniLML12V2 | ParaphraseMLMiniLML12V2Q | MultilingualE5Small => 0.47,
-        NomicEmbedTextV1 | NomicEmbedTextV15 | NomicEmbedTextV15Q | GTEBaseENV15 | GTEBaseENV15Q
-        | JinaEmbeddingsV2BaseEN | SnowflakeArcticEmbedMLong | SnowflakeArcticEmbedMLongQ => 0.55,
-        JinaEmbeddingsV2BaseCode => 0.64,
-        ParaphraseMLMpnetBaseV2 | MultilingualE5Base => 1.11,
+        NomicEmbedTextV1 | NomicEmbedTextV15 | NomicEmbedTextV15Q | JinaEmbeddingsV2BaseEN => 0.52,
+        SnowflakeArcticEmbedMLong | SnowflakeArcticEmbedMLongQ => 0.54,
+        GTEBaseENV15 | GTEBaseENV15Q => 0.55,
+        JinaEmbeddingsV2BaseCode | MxbaiEmbedLargeV1 | MxbaiEmbedLargeV1Q => 0.64,
+        ParaphraseMLMpnetBaseV2 => 1.00,
+        SnowflakeArcticEmbedL | SnowflakeArcticEmbedLQ => 1.02,
+        MultilingualE5Base => 1.11,
         EmbeddingGemma300M | EmbeddingGemma300MQ | EmbeddingGemma300MQ4 => 1.23,
         BGELargeZHV15 => 1.30,
-        BGELargeENV15 | BGELargeENV15Q | MxbaiEmbedLargeV1 | MxbaiEmbedLargeV1Q | SnowflakeArcticEmbedL
-        | SnowflakeArcticEmbedLQ => 1.34,
+        BGELargeENV15 | BGELargeENV15Q => 1.34,
         ModernBertEmbedLarge => 1.58,
         GTELargeENV15 | GTELargeENV15Q => 1.74,
         MultilingualE5Large => 2.24,
@@ -158,7 +161,7 @@ pub fn supported_models() -> Vec<ModelSpec> {
             recommended: RECOMMENDED.contains(&info.model),
         })
         .collect();
-    // Recommended first (fixed order), then by context and size, ascending.
+    // Recommended first (fixed order), then by dimensions, context, size (ascending).
     v.sort_by(|a, b| {
         let rank = |s: &ModelSpec| {
             RECOMMENDED
@@ -168,6 +171,7 @@ pub fn supported_models() -> Vec<ModelSpec> {
         };
         rank(a)
             .cmp(&rank(b))
+            .then(a.dim.cmp(&b.dim))
             .then(a.max_context.cmp(&b.max_context))
             .then(a.size_gb.total_cmp(&b.size_gb))
             .then_with(|| a.id.cmp(&b.id))
@@ -395,9 +399,10 @@ mod tests {
         assert_eq!(model_spec("Alibaba-NLP/gte-base-en-v1.5").unwrap().max_context, 8192);
         assert_eq!(model_spec("snowflake/snowflake-arctic-embed-m-long").unwrap().max_context, 2048);
         assert_eq!(model_spec("Xenova/all-MiniLM-L12-v2").unwrap().max_context, 256);
-        // Non-recommended: context ascending, then size ascending.
+        // Non-recommended: dims, then context, then size (ascending).
         let rest: Vec<_> = specs.iter().filter(|s| !s.recommended).collect();
-        assert!(rest.windows(2).all(|w| (w[0].max_context, w[0].size_gb) <= (w[1].max_context, w[1].size_gb)));
+        let key = |s: &ModelSpec| (s.dim, s.max_context, s.size_gb);
+        assert!(rest.windows(2).all(|w| key(w[0]) <= key(w[1])));
         assert_eq!(specs.iter().filter(|s| s.recommended).count(), 4);
     }
 }
