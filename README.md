@@ -78,6 +78,12 @@ models/                  FastEmbed ONNX cache
 
 Changing an index's model or chunk settings changes its fingerprint → next sync is a full rebuild (the GUI warns and offers to do it now). Cancelling keeps all completed files; the next sync resumes.
 
+**Index quality:**
+- *Scope context*: each chunk is embedded with its enclosing scopes from tree-sitter (`// In: namespace X > class UFoo > void UFoo::Tick(float)`), so a chunk from the middle of a long function still knows where it lives. Results show this as `In: …`.
+- *Split identifiers*: the keyword index also contains the parts of compound identifiers (`UCharacterMovementComponent` → `character movement component`), and queries are split the same way, so plain words find `PascalCase` / `snake_case` names.
+- *Licence headers*: on a full rebuild, leading comment blocks that start many files (≥5%, at least 20; years normalised) are detected per index and left out of embeddings and keyword search. Line numbers stay file-relative; source files are untouched.
+- *Results*: overlapping or adjacent excerpts of one file are merged into one result. `search_index` accepts `path_filter` (glob such as `Runtime/Engine/**`, or a folder prefix) and `extensions` (e.g. `[".h"]`).
+
 Search embeds the query (with the model's own query/document prefixes, e.g. BGE, Nomic, ModernBERT, E5, Gemma), runs LanceDB hybrid search (vector + BM25, fused with Reciprocal Rank Fusion) over the top `rerank_candidates` (30), re-scores them with a cross-encoder (`reranker_model`, default `jinaai/jina-reranker-v2-base-multilingual`, `null` disables), and returns the top `limit`. Each result is trimmed to the `snippet_max_lines` (40) lines that best match the query terms (identifiers are split on `::` and camelCase), labelled with the original chunk range.
 
 **Auto-sync on search** only runs inline when at most `auto_sync_max_files` (200) files changed and no full build is needed. Otherwise the search answers from the existing data with a note asking for "Index now" in the app (or `reindex_path`), so a tool call never blocks on a multi-minute build.
@@ -114,7 +120,7 @@ Each index card has an **AGENTS.md** button that generates a paste-ready paragra
 | `Alibaba-NLP/gte-base-en-v1.5` | 768 | 8192 | 0.55 GB | strong general retrieval, long context |
 | `lightonai/modernbert-embed-large` | 1024 | 8192 | 1.58 GB | highest quality, slowest |
 
-**Chunk size vs. model context:** chunks never exceed what the embedding model can read (≈2.75 characters per token for code, minus room for the path header): 512-token models such as `bge-small-en-v1.5` are limited to 1200 characters, 8k models like the jina default are effectively unlimited. Saving an index with a larger chunk size lowers it (with a note), the index dialog adjusts it when you pick a smaller model, and syncs enforce it for older configs.
+**Chunk size vs. model context:** chunks never exceed what the embedding model can read (≈2.75 characters per token for code, minus room for the path and scope header lines): 512-token models such as `bge-small-en-v1.5` are limited to 1100 characters, 8k models like the jina default are effectively unlimited. Saving an index with a larger chunk size lowers it (with a note), the index dialog adjusts it when you pick a smaller model, and syncs enforce it for older configs.
 
 ## Sharing indexes (export / import)
 

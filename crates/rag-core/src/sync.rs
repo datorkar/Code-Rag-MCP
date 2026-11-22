@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use serde::Serialize;
 
-use crate::chunker::{chunk_text, Chunk};
+use crate::chunker::{chunk_file, Chunk};
 use crate::config::AppConfig;
 use crate::embedder;
 use crate::lock::FileLock;
@@ -258,7 +258,7 @@ async fn sync_inner(
         tracing::info!("[{index_id}] full rebuild");
         drop(existing);
         ChunkStore::drop(&conn, index_id).await?;
-        manifest = Manifest { fingerprint: cfg.fingerprint(), files: Default::default() };
+        manifest = Manifest { fingerprint: cfg.fingerprint(), ..Default::default() };
         manifest.save(paths, index_id)?;
     }
 
@@ -320,6 +320,22 @@ async fn sync_inner(
             cfg.root_path,
             manifest.files.len()
         );
+    }
+    if full {
+        // Licence headers repeated across many files are not indexed.
+        let threads = app.intra_threads();
+        let list: Vec<(String, std::path::PathBuf)> =
+            files.iter().map(|f| (f.rel_path.clone(), f.abs_path.clone())).collect();
+        manifest.boilerplate = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            use rayon::prelude::*;
+            Ok(cpu_pool(threads)?.install(|| {
+                crate::boilerplate::detect(list.par_iter().map(|(r, p)| (r.as_str(), p.as_path())))
+            }))
+        })
+        .await??;
+        if !manifest.boilerplate.is_empty() {
+            tracing::info!("[{index_id}] {} shared licence header(s) excluded", manifest.boilerplate.len());
+        }
     }
     rep.p.files_scanned = files.len();
     rep.p.files_total = files.len();
@@ -403,6 +419,7 @@ async fn sync_inner(
     // saved before this check or edited by hand).
     let chunk_size = cfg.chunk_size.min(spec.max_chunk_chars);
     let overlap = if cfg.chunk_overlap >= chunk_size { chunk_size / 10 } else { cfg.chunk_overlap };
+    let boilerplate: std::collections::HashSet<String> = manifest.boilerplate.iter().cloned().collect();
     let chunks: Vec<Chunk> = {
         let cancel = cancel.clone();
         let threads = app.intra_threads();
@@ -429,7 +446,9 @@ async fn sync_inner(
                             return Vec::new();
                         }
                         let out = match std::fs::read(path) {
-                            Ok(bytes) => chunk_text(rel, &String::from_utf8_lossy(&bytes), chunk_size, overlap),
+                            Ok(bytes) => {
+                                chunk_file(rel, &String::from_utf8_lossy(&bytes), chunk_size, overlap, &boilerplate)
+                            }
                             Err(e) => {
                                 tracing::warn!("cannot read {}: {e}", path.display());
                                 Vec::new()

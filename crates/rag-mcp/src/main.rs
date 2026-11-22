@@ -23,6 +23,13 @@ struct SearchArgs {
     /// Maximum number of snippets to return (default 6, max 50).
     #[serde(default)]
     limit: Option<usize>,
+    /// Optional path restriction, relative to the index root. Glob
+    /// (`Runtime/Engine/**`, `**/*Movement*`) or a plain folder prefix (`Source/Runtime`).
+    #[serde(default)]
+    path_filter: Option<String>,
+    /// Optional file extensions to restrict to, e.g. [".h"] for declarations only.
+    #[serde(default)]
+    extensions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -101,11 +108,15 @@ impl RagServer {
     }
 
     #[tool(
-        description = "Semantic + keyword (hybrid BM25/vector, cross-encoder reranked) search over a local code index. Returns the most relevant code excerpts with file paths and line ranges; open the file for surrounding context. Use precise identifiers (class/function names) and/or a natural-language description of the behaviour you are looking for. Small on-disk changes are synced automatically before searching; large ones are reported in a note."
+        description = "Semantic + keyword (hybrid BM25/vector, cross-encoder reranked) search over a local code index. Returns the most relevant code excerpts with file paths and line ranges; open the file for surrounding context. Use precise identifiers (class/function names) and/or a natural-language description of the behaviour you are looking for. Narrow with path_filter (e.g. \"Runtime/Engine/**\") or extensions (e.g. [\".h\"]) when you know where to look. Each result shows its enclosing class/function. Small on-disk changes are synced automatically before searching; large ones are reported in a note."
     )]
     async fn search_index(&self, Parameters(args): Parameters<SearchArgs>) -> String {
         let limit = args.limit.unwrap_or(6);
-        let outcome = match self.engine.search(&args.index_id, &args.query, limit, true).await {
+        let filter = rag_core::SearchFilter {
+            path_glob: args.path_filter.clone(),
+            extensions: args.extensions.clone().unwrap_or_default(),
+        };
+        let outcome = match self.engine.search_filtered(&args.index_id, &args.query, limit, true, &filter).await {
             Ok(o) => o,
             Err(e) => return format!("Error: {e:#}"),
         };
@@ -130,7 +141,12 @@ impl RagServer {
             let _ = writeln!(out, "(note: {n})");
         }
         if outcome.hits.is_empty() {
-            let _ = writeln!(out, "No results for \"{}\" in index '{}'.", args.query, args.index_id);
+            let scope = if args.path_filter.is_some() || args.extensions.as_ref().is_some_and(|e| !e.is_empty()) {
+                " with the given path_filter/extensions (try without them)"
+            } else {
+                ""
+            };
+            let _ = writeln!(out, "No results for \"{}\" in index '{}'{scope}.", args.query, args.index_id);
             return out;
         }
         let _ = writeln!(out, "Index root: {root}\n");
@@ -139,9 +155,10 @@ impl RagServer {
                 .chunk_lines
                 .map(|(a, b)| format!(", excerpt of chunk {a}-{b}"))
                 .unwrap_or_default();
+            let scope = if h.context.is_empty() { String::new() } else { format!("In: `{}`\n", h.context) };
             let _ = writeln!(
                 out,
-                "### {}. {}:{}-{}  (score {:.3}{trimmed})\n```{}\n{}\n```\n",
+                "### {}. {}:{}-{}  (score {:.3}{trimmed})\n{scope}```{}\n{}\n```\n",
                 n + 1,
                 h.path,
                 h.start_line,

@@ -3,11 +3,13 @@
 //! LanceDB hybrid (vector + BM25) search.
 
 pub mod agents_md;
+pub mod boilerplate;
 pub mod batching;
 pub mod chunker;
 pub mod config;
 pub mod embedder;
 pub mod engine;
+pub mod idents;
 pub mod lock;
 pub mod manifest;
 pub mod paths;
@@ -21,7 +23,7 @@ pub mod walker;
 pub mod winml;
 
 pub use config::{AppConfig, ExecutionProvider, IndexConfig, ModelVariant, Precision, ResourceMode};
-pub use engine::{Engine, IndexInfo, IndexStatus, SaveResult, SearchOutcome};
+pub use engine::{Engine, IndexInfo, IndexStatus, SaveResult, SearchFilter, SearchOutcome};
 pub use paths::Paths;
 pub use store::SearchHit;
 pub use sync::{PhaseTimings, Phase, Progress, ProgressFn, SyncOptions, SyncReport, SyncTooLarge};

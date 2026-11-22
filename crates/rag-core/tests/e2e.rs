@@ -293,9 +293,9 @@ fn chunk_size_clamped_to_model_context() {
             None,
         )
         .unwrap();
-    assert_eq!(r.index.chunk_size, 1200);
-    assert!(r.index.chunk_overlap < 1200);
-    assert!(r.note.as_deref().unwrap_or("").contains("1200"), "{:?}", r.note);
+    assert_eq!(r.index.chunk_size, 1100);
+    assert!(r.index.chunk_overlap < 1100);
+    assert!(r.note.as_deref().unwrap_or("").contains("1100"), "{:?}", r.note);
     // Large-context default keeps its chunk size.
     let r = engine
         .save_index(
@@ -332,8 +332,93 @@ async fn empty_scan_keeps_existing_index() {
     engine.sync("e", SyncOptions::default()).await.unwrap();
     let mut files = std::collections::BTreeMap::new();
     files.insert("a.cpp".to_string(), FileEntry { hash: "h".into(), size: 1, mtime_ns: 0 });
-    Manifest { fingerprint: r.index.fingerprint(), files }.save(&engine.paths, "e").unwrap();
+    Manifest { fingerprint: r.index.fingerprint(), files, ..Default::default() }.save(&engine.paths, "e").unwrap();
     let err = engine.sync("e", SyncOptions::default()).await.unwrap_err();
     assert!(format!("{err:#}").contains("no matching files"), "{err:#}");
     assert_eq!(Manifest::load(&engine.paths, "e").unwrap().files.len(), 1, "manifest untouched");
+}
+
+/// Scope context, licence-header skipping, split-identifier keyword search,
+/// path/extension filters and merging of adjacent hits.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn quality_features() {
+    use rag_core::SearchFilter;
+    let data = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    let engine = Engine::with_paths(Paths::at(data.path()).unwrap());
+    #[cfg(unix)]
+    if let Ok(m) = std::env::var("RAG_TEST_MODELS") {
+        std::fs::remove_dir_all(engine.paths.models_dir()).ok();
+        std::os::unix::fs::symlink(m, engine.paths.models_dir()).unwrap();
+    }
+    let s = src.path();
+    std::fs::create_dir_all(s.join("Runtime/Movement")).unwrap();
+    std::fs::create_dir_all(s.join("Editor")).unwrap();
+    let lic = "// Copyright 1998-2024 Acme Games, Inc. All Rights Reserved.\n\n";
+    // 25 files share the licence header -> boilerplate.
+    for i in 0..25 {
+        std::fs::write(s.join(format!("Editor/Tool{i}.cpp")), format!("{lic}void UTool{i}::Run() {{ Execute({i}); }}\n")).unwrap();
+    }
+    std::fs::write(
+        s.join("Runtime/Movement/CharacterMovementComponent.cpp"),
+        format!(
+            "{lic}#include \"CharacterMovementComponent.h\"\n\nvoid UCharacterMovementComponent::PhysWalking(float DeltaTime, int32 Iterations)\n{{\n    const FVector OldLocation = UpdatedComponent->GetComponentLocation();\n    ApplyGravityAndFriction(DeltaTime);\n    MoveAlongFloor(Velocity, DeltaTime);\n    if (IsFalling()) {{ StartFalling(Iterations, DeltaTime); }}\n}}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        s.join("Runtime/Movement/CharacterMovementComponent.h"),
+        format!("{lic}class UCharacterMovementComponent : public UPawnMovementComponent\n{{\npublic:\n    void PhysWalking(float DeltaTime, int32 Iterations);\n}};\n"),
+    )
+    .unwrap();
+    engine
+        .save_index(
+            IndexConfig {
+                id: "q".into(),
+                root_path: s.to_string_lossy().into(),
+                embed_model: "BAAI/bge-small-en-v1.5".into(),
+                allowed_extensions: vec![".cpp".into(), ".h".into()],
+                chunk_size: 300,
+                chunk_overlap: 30,
+                auto_update_on_search: false,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    engine.sync("q", SyncOptions::default()).await.unwrap();
+    let m = rag_core::manifest::Manifest::load(&engine.paths, "q").unwrap();
+    assert_eq!(m.boilerplate.len(), 1, "licence header detected");
+
+    // Licence text is not indexed.
+    let r = engine.search("q", "Copyright Acme Games All Rights Reserved", 50, false).await.unwrap();
+    assert!(r.hits.iter().all(|h| !h.text.contains("Copyright")), "{:#?}", r.hits);
+
+    // Natural-language words find the compound identifier; context names the function.
+    let r = engine.search("q", "phys walking movement", 3, false).await.unwrap();
+    let top = &r.hits[0];
+    assert!(top.path.contains("CharacterMovementComponent"), "{:#?}", r.hits);
+    let walk = r.hits.iter().find(|h| h.path.ends_with(".cpp")).expect("cpp hit");
+    assert!(walk.context.contains("UCharacterMovementComponent::PhysWalking"), "{:?}", walk.context);
+    assert!(walk.start_line >= 3, "lines stay file-relative after header skip");
+
+    // Filters.
+    let only_h = SearchFilter { extensions: vec![".h".into()], ..Default::default() };
+    let r = engine.search_filtered("q", "PhysWalking", 5, false, &only_h).await.unwrap();
+    assert!(!r.hits.is_empty() && r.hits.iter().all(|h| h.path.ends_with(".h")), "{:#?}", r.hits);
+    let editor = SearchFilter { path_glob: Some("Editor/**".into()), ..Default::default() };
+    let r = engine.search_filtered("q", "PhysWalking", 5, false, &editor).await.unwrap();
+    assert!(r.hits.iter().all(|h| h.path.starts_with("Editor/")), "{:#?}", r.hits);
+
+    // No two results overlap within a file.
+    let r = engine.search("q", "UCharacterMovementComponent PhysWalking DeltaTime", 10, false).await.unwrap();
+    for (i, a) in r.hits.iter().enumerate() {
+        for b in &r.hits[i + 1..] {
+            let lines = |h: &rag_core::SearchHit| h.chunk_lines.unwrap_or((h.start_line, h.end_line));
+            let (a0, a1) = lines(a);
+            let (b0, b1) = lines(b);
+            assert!(a.path != b.path || b0 > a1 + 1 || a0 > b1 + 1, "overlap: {a:?} {b:?}");
+        }
+    }
 }

@@ -35,9 +35,10 @@ use crate::paths::Paths;
 use crate::store::{self, ChunkStore};
 
 const MAGIC: &[u8; 8] = b"LCRAG\x00\x01\n";
-pub const FORMAT: u32 = 1;
+/// 2: chunks carry `context` + `fts_text`; manifest carries `boilerplate`.
+pub const FORMAT: u32 = 2;
 /// Bump when chunk boundaries change (tree-sitter grammars, splitter logic).
-pub const CHUNKER_VERSION: u32 = 1;
+pub const CHUNKER_VERSION: u32 = 2;
 pub const EXTENSION: &str = "lcrag";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +142,12 @@ fn read_meta(r: &mut impl Read) -> Result<ExportMeta> {
     if meta.format > FORMAT {
         bail!("export format {} is newer than this app supports ({FORMAT}); update the app", meta.format);
     }
+    if meta.format < FORMAT {
+        bail!(
+            "export format {} was made by an older version of the app; ask for a new export (format {FORMAT})",
+            meta.format
+        );
+    }
     Ok(meta)
 }
 
@@ -177,7 +184,11 @@ pub async fn export_index(paths: &Paths, index_id: &str, out: &Path, label: Opti
     for e in files.values_mut() {
         e.mtime_ns = 0;
     }
-    let manifest_out = Manifest { fingerprint: manifest.fingerprint.clone(), files };
+    let manifest_out = Manifest {
+        fingerprint: manifest.fingerprint.clone(),
+        files,
+        boilerplate: manifest.boilerplate.clone(),
+    };
 
     let tmp = out.with_extension("lcrag.part");
     let f = std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
@@ -186,7 +197,7 @@ pub async fn export_index(paths: &Paths, index_id: &str, out: &Path, label: Opti
     write_block(&mut z, &serde_json::to_vec(&meta)?)?;
     write_block(&mut z, &serde_json::to_vec(&manifest_out)?)?;
 
-    let cols = ["path", "start_line", "end_line", "text", "text_hash", "vector"];
+    let cols = ["path", "start_line", "end_line", "text", "context", "fts_text", "text_hash", "vector"];
     let mut stream = store
         .table
         .query()
@@ -266,18 +277,42 @@ pub async fn import_index(
 
     // Load chunks; keep their text per file for verification.
     let reader = StreamReader::try_new(r, None).context("reading export chunks")?;
-    let mut texts: HashMap<String, Vec<String>> = HashMap::new();
+    // path -> [(chunk text, scope context)]
+    let mut texts: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for batch in reader {
         let batch = batch.context("reading export chunks")?;
         let b = cast_vectors(&batch, DataType::Float32)?;
         let path_col = b.column_by_name("path").context("path column")?.as_string::<i32>().clone();
         let text_col = b.column_by_name("text").context("text column")?.as_string::<i32>().clone();
+        let ctx_col = b.column_by_name("context").context("context column")?.as_string::<i32>().clone();
+        // The keyword-index text is derived locally, never taken from the file.
+        let fts: lancedb::arrow::arrow_array::StringArray = (0..b.num_rows())
+            .map(|i| {
+                Some(
+                    crate::chunker::Chunk {
+                        rel_path: String::new(),
+                        start_line: 0,
+                        end_line: 0,
+                        text: text_col.value(i).to_string(),
+                        context: ctx_col.value(i).to_string(),
+                    }
+                    .fts_input(),
+                )
+            })
+            .collect();
+        let fts_idx = b.schema().index_of("fts_text").context("fts_text column")?;
+        let mut cols = b.columns().to_vec();
+        cols[fts_idx] = Arc::new(fts);
+        let b = RecordBatch::try_new(b.schema(), cols)?;
         for i in 0..b.num_rows() {
             if !path_col.is_null(i) && !is_safe_rel(path_col.value(i)) {
                 bail!("export contains an unsafe file path '{}'", path_col.value(i));
             }
             if !path_col.is_null(i) {
-                texts.entry(path_col.value(i).to_string()).or_default().push(text_col.value(i).to_string());
+                texts
+                    .entry(path_col.value(i).to_string())
+                    .or_default()
+                    .push((text_col.value(i).to_string(), ctx_col.value(i).to_string()));
             }
         }
         store.table.add(b).execute().await.context("storing imported chunks")?;
@@ -292,7 +327,15 @@ pub async fn import_index(
             .par_iter()
             .filter_map(|(rel, list)| {
                 let local = std::fs::read(root.join(rel)).ok().map(|b| String::from_utf8_lossy(&b).into_owned());
-                let ok = local.is_some_and(|s| list.iter().all(|t| s.contains(t.as_str())));
+                let ok = local.is_some_and(|s| {
+                    // Scope labels are whitespace-collapsed source text.
+                    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+                    list.iter().all(|(t, ctx)| {
+                        s.contains(t.as_str())
+                            && (ctx.is_empty()
+                                || ctx.split(" > ").all(|l| flat.contains(l.trim_end_matches('…'))))
+                    })
+                });
                 (!ok).then(|| rel.clone())
             })
             .collect()
@@ -312,7 +355,7 @@ pub async fn import_index(
         })
         .collect();
     let file_count = files.len();
-    Manifest { fingerprint: cfg.fingerprint(), files }.save(paths, &cfg.id)?;
+    Manifest { fingerprint: cfg.fingerprint(), files, boilerplate: manifest.boilerplate }.save(paths, &cfg.id)?;
 
     store.rebuild_indices(&mut |_, _, _| {}).await?;
     let total = store.count().await?;

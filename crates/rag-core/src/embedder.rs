@@ -388,10 +388,10 @@ pub fn cached_worker(
 
 /// Chunk size (characters) that fits a model's context: ~2.75 chars/token
 /// for code (identifiers and symbols split into many tokens), minus room for
-/// the `// File: path` header and special tokens, rounded down to 100.
-/// 512-token models -> 1300 chars; 8192-token models -> 22400 chars.
+/// the `// File:` / `// In:` header lines and special tokens, rounded down to 100.
+/// 512-token models -> 1100 chars; 8192-token models -> 22300 chars.
 pub fn max_chunk_chars(max_context_tokens: usize) -> usize {
-    let chars = max_context_tokens.saturating_sub(40) * 11 / 4;
+    let chars = max_context_tokens.saturating_sub(80) * 11 / 4;
     (chars / 100 * 100).max(200)
 }
 
@@ -416,7 +416,7 @@ mod tests {
         let specs = supported_models();
         assert_eq!(specs[0].id, "jinaai/jina-embeddings-v2-base-code");
         assert_eq!(specs[0].max_context, 8192);
-        assert_eq!(model_spec("BAAI/bge-small-en-v1.5").unwrap().max_chunk_chars, 1200);
+        assert_eq!(model_spec("BAAI/bge-small-en-v1.5").unwrap().max_chunk_chars, 1100);
         // No duplicate ids in the list (pre-quantized variants hidden).
         let mut ids: Vec<_> = specs.iter().map(|s| s.id.to_ascii_lowercase()).collect();
         let n = ids.len();

@@ -1,5 +1,5 @@
 //! LanceDB storage: one table per index with a native BM25 full-text index on
-//! `text` and brute-force / IVF vector search on `vector`.
+//! `fts_text` (code + scopes + split identifiers) and exact vector search.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,6 +30,10 @@ fn schema(dim: usize) -> SchemaRef {
         Field::new("start_line", DataType::UInt32, false),
         Field::new("end_line", DataType::UInt32, false),
         Field::new("text", DataType::Utf8, false),
+        // Enclosing scopes (class / function signature) at the chunk start.
+        Field::new("context", DataType::Utf8, false),
+        // Keyword-index input: text + context + split identifiers.
+        Field::new("fts_text", DataType::Utf8, false),
         // blake3 of the exact embedding input; lets unchanged chunks reuse
         // their vector when a file is re-synced.
         Field::new("text_hash", DataType::Utf8, false),
@@ -48,6 +52,9 @@ pub struct SearchHit {
     pub end_line: u32,
     pub score: f32,
     pub text: String,
+    /// Enclosing scopes, e.g. `class UFoo > void UFoo::Tick(float)`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub context: String,
     /// Full line range of the stored chunk when `text` was trimmed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_lines: Option<(u32, u32)>,
@@ -131,6 +138,8 @@ impl ChunkStore {
         let start = UInt32Array::from_iter_values(chunks.iter().map(|c| c.start_line));
         let end = UInt32Array::from_iter_values(chunks.iter().map(|c| c.end_line));
         let text = StringArray::from_iter_values(chunks.iter().map(|c| c.text.as_str()));
+        let context = StringArray::from_iter_values(chunks.iter().map(|c| c.context.as_str()));
+        let fts = StringArray::from_iter_values(chunks.iter().map(|c| c.fts_input()));
         let vector = FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
             vectors.into_iter().map(|v| Some(v.into_iter().map(Some))),
             dim as i32,
@@ -142,6 +151,8 @@ impl ChunkStore {
                 Arc::new(start),
                 Arc::new(end),
                 Arc::new(text),
+                Arc::new(context),
+                Arc::new(fts),
                 Arc::new(text_hash),
                 Arc::new(vector),
             ],
@@ -211,7 +222,7 @@ impl ChunkStore {
         self.table
             .list_indices()
             .await
-            .map(|ix| ix.iter().any(|i| i.columns.iter().any(|c| c == "text")))
+            .map(|ix| ix.iter().any(|i| i.columns.iter().any(|c| c == "fts_text")))
             .unwrap_or(false)
     }
 
@@ -260,7 +271,7 @@ impl ChunkStore {
         // positions (phrase queries are not used; ~25% less work).
         let fts = FtsIndexBuilder::default().stem(false).remove_stop_words(false).with_position(false);
         self.table
-            .create_index(&["text"], Index::FTS(fts))
+            .create_index(&["fts_text"], Index::FTS(fts))
             .replace(true)
             .execute()
             .await
@@ -302,30 +313,31 @@ impl ChunkStore {
 
     /// Hybrid search: vector similarity + BM25, fused with Reciprocal Rank Fusion.
     /// Falls back to pure vector search if no FTS index exists yet.
-    pub async fn search(&self, query: &str, vector: &[f32], limit: usize) -> Result<Vec<SearchHit>> {
-        let cols = ["path", "start_line", "end_line", "text"];
+    pub async fn search(
+        &self,
+        query: &str,
+        vector: &[f32],
+        limit: usize,
+        filter: Option<&str>,
+    ) -> Result<Vec<SearchHit>> {
+        let cols = ["path", "start_line", "end_line", "text", "context"];
         let select = lancedb::query::Select::columns(&cols);
+        let mut q = self.table.query().select(select).limit(limit);
+        if let Some(f) = filter {
+            q = q.only_if(f);
+        }
         let batches: Vec<RecordBatch> = if self.has_fts_index().await && !query.trim().is_empty() {
-            self.table
-                .query()
-                .full_text_search(FullTextSearchQuery::new(query.to_string()))
-                .select(select)
-                .limit(limit)
+            // Query words plus their identifier parts (`PhysWalking` -> `phys walking`).
+            let split = crate::idents::split_terms(query);
+            let fts_query = if split.is_empty() { query.to_string() } else { format!("{query} {split}") };
+            q.full_text_search(FullTextSearchQuery::new(fts_query).with_column("fts_text".to_string())?)
                 .nearest_to(vector)?
                 .execute()
                 .await?
                 .try_collect()
                 .await?
         } else {
-            self.table
-                .query()
-                .select(select)
-                .limit(limit)
-                .nearest_to(vector)?
-                .execute()
-                .await?
-                .try_collect()
-                .await?
+            q.nearest_to(vector)?.execute().await?.try_collect().await?
         };
 
         let mut hits = Vec::new();
@@ -335,6 +347,7 @@ impl ChunkStore {
             let start = col("start_line")?.as_primitive::<arrow_array::types::UInt32Type>().clone();
             let end = col("end_line")?.as_primitive::<arrow_array::types::UInt32Type>().clone();
             let text = col("text")?.as_string::<i32>().clone();
+            let context = col("context")?.as_string::<i32>().clone();
             let score: Vec<f32> = if let Some(s) = b.column_by_name("_relevance_score") {
                 s.as_primitive::<Float32Type>().values().to_vec()
             } else if let Some(d) = b.column_by_name("_distance") {
@@ -352,6 +365,7 @@ impl ChunkStore {
                     end_line: end.value(i),
                     score: score[i],
                     text: text.value(i).to_string(),
+                    context: context.value(i).to_string(),
                     chunk_lines: None,
                 });
             }

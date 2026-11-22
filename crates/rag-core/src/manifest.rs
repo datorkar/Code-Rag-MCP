@@ -22,6 +22,9 @@ pub struct Manifest {
     /// `IndexConfig::fingerprint()` the stored chunks were built with.
     pub fingerprint: String,
     pub files: BTreeMap<String, FileEntry>,
+    /// Hashes of licence headers shared by many files (see `boilerplate`);
+    /// detected on full rebuilds, reused by incremental syncs.
+    pub boilerplate: Vec<String>,
 }
 
 impl Manifest {

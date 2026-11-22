@@ -1,5 +1,6 @@
 //! High-level facade shared by the MCP server and the Tauri GUI.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
@@ -176,6 +177,18 @@ impl Engine {
         limit: usize,
         allow_auto_sync: bool,
     ) -> Result<SearchOutcome> {
+        self.search_filtered(id, query, limit, allow_auto_sync, &SearchFilter::default()).await
+    }
+
+    /// [`search`](Self::search) restricted to paths matching `filter`.
+    pub async fn search_filtered(
+        &self,
+        id: &str,
+        query: &str,
+        limit: usize,
+        allow_auto_sync: bool,
+        filter: &SearchFilter,
+    ) -> Result<SearchOutcome> {
         let app = self.config()?;
         let ix = app.index(id).cloned().ok_or_else(|| {
             let ids: Vec<_> = app.indexes.iter().map(|i| i.id.as_str()).collect();
@@ -230,7 +243,8 @@ impl Engine {
         let vector = tokio::task::spawn_blocking(move || emb.lock().unwrap().embed_query(&q)).await??;
         let limit = limit.clamp(1, 50);
         let candidates = if app.reranker_model.is_some() { limit.max(app.rerank_candidates) } else { limit };
-        let mut hits = store.search(query, &vector, candidates).await?;
+        let sql = filter.to_sql();
+        let mut hits = store.search(query, &vector, candidates, sql.as_deref()).await?;
 
         if let Some(model) = app.reranker_model.clone().filter(|_| hits.len() > 1) {
             match self.rerank(&model, app.execution_provider, app.fp16_enabled(), query, &hits).await {
@@ -246,7 +260,8 @@ impl Engine {
                 }
             }
         }
-        hits.truncate(limit);
+        // Overlapping / adjacent excerpts of one file become one result.
+        let hits = merge_adjacent(hits, std::path::Path::new(&ix.root_path), limit);
         let hits = hits
             .into_iter()
             .map(|h| snippet::trim_hit(h, query, app.snippet_max_lines))
@@ -271,7 +286,11 @@ impl Engine {
             .iter()
             .map(|h| {
                 let body: String = h.text.chars().take(3000).collect();
-                format!("// File: {}\n{body}", h.path)
+                if h.context.is_empty() {
+                    format!("// File: {}\n{body}", h.path)
+                } else {
+                    format!("// File: {}\n// In: {}\n{body}", h.path, h.context)
+                }
             })
             .collect();
         let q = query.to_string();
@@ -280,5 +299,136 @@ impl Engine {
         let mut order: Vec<(usize, f32)> = res.into_iter().map(|r| (r.index, r.score)).collect();
         order.sort_by(|a, b| b.1.total_cmp(&a.1));
         Ok(order)
+    }
+}
+
+/// Optional restriction of a search to part of an index.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilter {
+    /// Glob on the relative path (`Runtime/Engine/**`, `**/*Movement*.cpp`).
+    /// Without wildcards it is a path prefix (`Source/Runtime`).
+    pub path_glob: Option<String>,
+    /// File extensions (`.h`, `cpp`), case-insensitive.
+    pub extensions: Vec<String>,
+}
+
+impl SearchFilter {
+    /// SQL predicate for LanceDB, or `None` when unrestricted.
+    pub fn to_sql(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(g) = self.path_glob.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
+            let g = g.replace('\\', "/");
+            let g = g.trim_start_matches("./").trim_start_matches('/');
+            let has_wild = g.contains(['*', '?']);
+            let mut like = String::new();
+            let mut chars = g.chars().peekable();
+            while let Some(c) = chars.next() {
+                match c {
+                    '*' => {
+                        while chars.peek() == Some(&'*') {
+                            chars.next();
+                        }
+                        like.push('%');
+                    }
+                    '?' => like.push('_'),
+                    '\'' => like.push_str("''"),
+                    c => like.push(c),
+                }
+            }
+            if !has_wild {
+                like = format!("{}%", like.trim_end_matches('/'));
+            }
+            parts.push(format!("path LIKE '{like}'"));
+        }
+        let exts: Vec<String> = self
+            .extensions
+            .iter()
+            .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+            .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()))
+            .map(|e| format!("lower(path) LIKE '%.{e}'"))
+            .collect();
+        if !exts.is_empty() {
+            parts.push(format!("({})", exts.join(" OR ")));
+        }
+        (!parts.is_empty()).then(|| parts.join(" AND "))
+    }
+}
+
+/// Merge hits whose line ranges overlap or touch within one file, keeping
+/// rank order (a merged hit takes the better rank and score). The merged
+/// text is re-read from disk; if the file can't be read, hits stay separate.
+fn merge_adjacent(hits: Vec<SearchHit>, root: &std::path::Path, limit: usize) -> Vec<SearchHit> {
+    let mut out: Vec<SearchHit> = Vec::new();
+    let mut files: HashMap<String, Option<Vec<String>>> = HashMap::new();
+    for h in hits {
+        let target = out
+            .iter()
+            .position(|k| k.path == h.path && h.start_line <= k.end_line + 1 && h.end_line + 1 >= k.start_line);
+        if let Some(t) = target {
+            let lines = files
+                .entry(h.path.clone())
+                .or_insert_with(|| {
+                    std::fs::read(root.join(&h.path))
+                        .ok()
+                        .map(|b| String::from_utf8_lossy(&b).lines().map(str::to_string).collect())
+                })
+                .as_ref();
+            if let Some(lines) = lines {
+                let k = &mut out[t];
+                let (a, b) = (k.start_line.min(h.start_line), k.end_line.max(h.end_line));
+                if (b as usize) <= lines.len() && a >= 1 {
+                    k.start_line = a;
+                    k.end_line = b;
+                    k.text = lines[a as usize - 1..b as usize].join("\n");
+                    continue;
+                }
+            }
+        }
+        if out.len() < limit {
+            out.push(h);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn filter_sql() {
+        let f = |g: &str, e: &[&str]| SearchFilter {
+            path_glob: (!g.is_empty()).then(|| g.to_string()),
+            extensions: e.iter().map(|s| s.to_string()).collect(),
+        }
+        .to_sql();
+        assert_eq!(f("", &[]), None);
+        assert_eq!(f("Runtime/Engine", &[]).unwrap(), "path LIKE 'Runtime/Engine%'");
+        assert_eq!(f("Runtime/**/*.cpp", &[]).unwrap(), "path LIKE 'Runtime/%/%.cpp'");
+        assert_eq!(f("", &[".h", "CPP"]).unwrap(), "(lower(path) LIKE '%.h' OR lower(path) LIKE '%.cpp')");
+        assert!(f("it's", &[]).unwrap().contains("it''s"));
+        assert_eq!(f("", &["h; DROP"]), None);
+    }
+
+    #[test]
+    fn merges_overlapping_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let body: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.path().join("a.cpp"), body).unwrap();
+        let hit = |p: &str, a: u32, b: u32, s: f32| SearchHit {
+            path: p.into(),
+            start_line: a,
+            end_line: b,
+            score: s,
+            text: String::new(),
+            context: String::new(),
+            chunk_lines: None,
+        };
+        let hits = vec![hit("a.cpp", 10, 15, 0.9), hit("b.cpp", 1, 5, 0.8), hit("a.cpp", 14, 20, 0.7), hit("a.cpp", 25, 28, 0.6)];
+        let out = merge_adjacent(hits, dir.path(), 5);
+        assert_eq!(out.len(), 3);
+        assert_eq!((out[0].start_line, out[0].end_line), (10, 20));
+        assert!(out[0].text.starts_with("line 10") && out[0].text.ends_with("line 20"));
+        assert_eq!(out[2].start_line, 25);
     }
 }

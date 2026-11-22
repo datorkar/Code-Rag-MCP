@@ -105,6 +105,7 @@ mod tests {
             end_line: 110,
             score: 1.0,
             text,
+            context: String::new(),
             chunk_lines: None,
         };
         let t = trim_hit(hit, "PhysWalking", 20);

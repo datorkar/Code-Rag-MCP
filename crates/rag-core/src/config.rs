@@ -246,14 +246,15 @@ impl IndexConfig {
 
     /// Settings that invalidate every stored chunk when changed.
     pub fn fingerprint(&self) -> String {
-        // `v2`: chunks table gained `text_hash` (embedding cache); older
-        // indexes are rebuilt once.
+        // `v2`: chunks table gained `text_hash` (embedding cache).
+        // `v3`: scope context, split-identifier keyword index, boilerplate
+        // header skipping. Older indexes are rebuilt once.
         // FP32 and FP16 produce the same vectors, so only INT8 is a separate
         // class (switching to/from it rebuilds the index).
         let class = if self.precision == Precision::Int8 { "|int8" } else { "" };
         // Models that gained a document prefix rebuild once.
         let dp = if crate::embedder::has_v3_doc_prefix(&self.embed_model) { "|dp" } else { "" };
-        format!("v2|{}|{}|{}{class}{dp}", self.embed_model, self.chunk_size, self.chunk_overlap)
+        format!("v3|{}|{}|{}{class}{dp}", self.embed_model, self.chunk_size, self.chunk_overlap)
     }
 }
 
