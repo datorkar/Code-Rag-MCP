@@ -108,6 +108,9 @@ impl Engine {
     /// are preserved from the stored copy. `original_id` allows renaming.
     pub fn save_index(&self, mut ix: IndexConfig, original_id: Option<&str>) -> Result<SaveResult> {
         ix.normalize()?;
+        if !std::path::Path::new(&ix.root_path).is_dir() {
+            bail!("root folder '{}' does not exist or is not a folder", ix.root_path);
+        }
         let spec = embedder::model_spec(&ix.embed_model)?;
         let mut note = None;
         if ix.chunk_size > spec.max_chunk_chars {

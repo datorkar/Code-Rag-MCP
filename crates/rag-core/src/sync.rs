@@ -269,11 +269,12 @@ async fn sync_inner(
     let (files, hashed) = {
         let cfg = cfg.clone();
         let cancel = cancel.clone();
-        let prev = manifest.files.clone();
+        // Moved into the blocking task and handed back (no copy of a 100k-entry map).
+        let prev = std::mem::take(&mut manifest.files);
         let cb = rep.cb.clone();
         let id = index_id.to_string();
         let threads = app.intra_threads();
-        tokio::task::spawn_blocking(move || -> Result<_> {
+        let res = tokio::task::spawn_blocking(move || -> Result<_> {
             let pool = cpu_pool(threads)?;
             let files = walker::walk(&cfg, &cancel)?;
             let total = files.len();
@@ -302,11 +303,24 @@ async fn sync_inner(
                         });
                     }
                 }
-            }))?;
-            Ok((files, hashed))
+            }));
+            Ok((files, hashed, prev))
         })
-        .await??
+        .await??;
+        manifest.files = res.2;
+        let (files, hashed) = (res.0, res.1?);
+        (files, hashed)
     };
+    // An empty scan of a previously indexed folder is almost always an
+    // unmounted drive / unsynced workspace, not a real mass delete: keep the index.
+    if files.is_empty() && !manifest.files.is_empty() && !opts.force_full {
+        bail!(
+            "no matching files found under '{}' (previously {}); is the folder/drive available? \
+             Use Full rebuild if the files were really removed.",
+            cfg.root_path,
+            manifest.files.len()
+        );
+    }
     rep.p.files_scanned = files.len();
     rep.p.files_total = files.len();
     timings.scan = t_scan.elapsed().as_secs_f64();
@@ -605,10 +619,15 @@ async fn sync_inner(
         bail!(Cancelled);
     }
 
+    // Chunk texts and hashes are no longer needed; free them before the
+    // (potentially long) index phase.
+    let rows_changed = chunks.len() + to_delete.len();
+    drop(dups);
+    drop((chunks, hashes, unique, tokens, vecs));
     rep.phase(Phase::BuildingIndex, "updating indexes".to_string());
     let t_index = Instant::now();
     report.timings.index_steps = store
-        .update_indices(chunks.len() + to_delete.len(), &mut |step, steps, label| {
+        .update_indices(rows_changed, &mut |step, steps, label| {
             rep.p.index_step = step;
             rep.p.index_steps = steps;
             rep.phase(Phase::BuildingIndex, label.to_string());

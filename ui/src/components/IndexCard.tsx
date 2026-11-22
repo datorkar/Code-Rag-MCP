@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { IndexInfo, Progress } from "../types";
 import { timeAgo } from "../presets";
 
@@ -17,14 +18,15 @@ const LABEL: Record<string, string> = {
 interface Props {
   ix: IndexInfo;
   progress?: Progress;
-  onIndex: (force: boolean) => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onAgentsMd: () => void;
-  onExport: () => void;
+  onIndex: (ix: IndexInfo, force: boolean) => void;
+  onEdit: (ix: IndexInfo) => void;
+  onDelete: (ix: IndexInfo) => void;
+  onAgentsMd: (ix: IndexInfo) => void;
+  onExport: (ix: IndexInfo) => void;
 }
 
-export function IndexCard({ ix, progress, onIndex, onEdit, onDelete, onAgentsMd, onExport }: Props) {
+/** Memoised: progress events re-render only the card whose job changed. */
+export const IndexCard = memo(function IndexCard({ ix, progress, onIndex, onEdit, onDelete, onAgentsMd, onExport }: Props) {
   const status = progress ? "indexing" : ix.status;
   const busy = status === "indexing";
   const pct =
@@ -60,22 +62,22 @@ export function IndexCard({ ix, progress, onIndex, onEdit, onDelete, onAgentsMd,
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <button className="btn-primary" disabled={busy} onClick={() => onIndex(false)}>
+          <button className="btn-primary" disabled={busy} onClick={() => onIndex(ix, false)}>
             Index now
           </button>
-          <button className="btn-ghost" disabled={busy} onClick={() => onIndex(true)} title="Drop all chunks and rebuild">
+          <button className="btn-ghost" disabled={busy} onClick={() => onIndex(ix, true)} title="Drop all chunks and rebuild">
             Full rebuild
           </button>
-          <button className="btn-ghost" onClick={onAgentsMd} title="Instructions to paste into the project's AGENTS.md / CLAUDE.md">
+          <button className="btn-ghost" onClick={() => onAgentsMd(ix)} title="Instructions to paste into the project's AGENTS.md / CLAUDE.md">
             AGENTS.md
           </button>
-          <button className="btn-ghost" disabled={busy || !ix.last_indexed_at} onClick={onExport} title="Share this index as a .lcrag file">
+          <button className="btn-ghost" disabled={busy || !ix.last_indexed_at} onClick={() => onExport(ix)} title="Share this index as a .lcrag file">
             Export
           </button>
-          <button className="btn-ghost" onClick={onEdit}>
+          <button className="btn-ghost" onClick={() => onEdit(ix)}>
             Settings
           </button>
-          <button className="btn-danger" disabled={busy} onClick={onDelete}>
+          <button className="btn-danger" disabled={busy} onClick={() => onDelete(ix)}>
             Delete
           </button>
         </div>
@@ -98,7 +100,7 @@ export function IndexCard({ ix, progress, onIndex, onEdit, onDelete, onAgentsMd,
       </div>
     </div>
   );
-}
+});
 
 function Stat({ label, value, mono, title }: { label: string; value: string; mono?: boolean; title?: string }) {
   return (

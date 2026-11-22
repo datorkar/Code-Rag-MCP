@@ -32,9 +32,10 @@ export function ExportModal({ ix, onClose }: { ix: IndexInfo; onClose: () => voi
     <Modal
       title={`Export “${ix.name}”`}
       onClose={onClose}
+      locked={busy}
       footer={
         <>
-          <button className="btn-ghost" onClick={onClose}>
+          <button className="btn-ghost" onClick={onClose} disabled={busy}>
             Close
           </button>
           <button className="btn-primary" disabled={busy} onClick={run}>
@@ -117,9 +118,11 @@ export function ImportModal({ onClose, onImported }: { onClose: () => void; onIm
       title="Import index"
       onClose={onClose}
       wide
+      locked={busy}
+      dismissOnBackdrop={false}
       footer={
         <>
-          <button className="btn-ghost" onClick={onClose}>
+          <button className="btn-ghost" onClick={onClose} disabled={busy}>
             Close
           </button>
           <button className="btn-primary" disabled={busy || !meta || !root || !id} onClick={run}>

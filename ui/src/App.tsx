@@ -33,13 +33,17 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    api.listIndexes().then(setIndexes).catch((e) => setError(String(e)));
+    api
+      .listIndexes()
+      // Keep the old array when nothing changed so memoised cards don't re-render on every poll.
+      .then((next) => setIndexes((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next)))
+      .catch((e) => setError(String(e)));
   }, []);
 
   useEffect(() => {
     refresh();
-    api.listModels().then(setModels);
-    api.getSettings().then(setSettings);
+    api.listModels().then(setModels).catch((e) => setError(String(e)));
+    api.getSettings().then(setSettings).catch((e) => setError(String(e)));
     // Pick up MCP-side auto-syncs; skip while the window is hidden/minimised.
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") refresh();
@@ -65,7 +69,7 @@ export default function App() {
     };
   }, [refresh]);
 
-  const startIndex = async (id: string, force: boolean) => {
+  const startIndex = useCallback(async (id: string, force: boolean) => {
     if (force && !(await ask(`Drop all chunks of “${id}” and rebuild from scratch?`, { kind: "warning" }))) return;
     try {
       setFinished(({ [id]: _, ...rest }) => rest);
@@ -95,9 +99,9 @@ export default function App() {
       setJobs(({ [id]: _, ...rest }) => rest);
       setError(String(e));
     }
-  };
+  }, []);
 
-  const deleteIndex = async (ix: IndexInfo) => {
+  const deleteIndex = useCallback(async (ix: IndexInfo) => {
     if (!(await ask(`Delete index “${ix.name}” and all its stored chunks? Source files are not touched.`, { kind: "warning" })))
       return;
     try {
@@ -106,7 +110,16 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     }
-  };
+  }, [refresh]);
+
+  // Stable handlers for the memoised cards.
+  const onCardIndex = useCallback((ix: IndexInfo, force: boolean) => startIndex(ix.id, force), [startIndex]);
+  const onCardEdit = useCallback((ix: IndexInfo) => setEditing({ ix, isNew: false }), []);
+  const newIndex = () =>
+    setEditing({
+      ix: { ...DEFAULT_INDEX, embed_model: settings?.active_embed_model ?? DEFAULT_INDEX.embed_model },
+      isNew: true,
+    });
 
   const saveIndex = async (ix: IndexConfig, rebuild: boolean) => {
     const res = await api.saveIndex(ix, editing?.isNew ? null : (editing?.ix.id ?? null));
@@ -140,15 +153,7 @@ export default function App() {
           <button className="btn-ghost" onClick={() => setShowClaude(true)}>
             Install to Claude Code
           </button>
-          <button
-            className="btn-primary"
-            onClick={() =>
-              setEditing({
-                ix: { ...DEFAULT_INDEX, embed_model: settings?.active_embed_model ?? DEFAULT_INDEX.embed_model },
-                isNew: true,
-              })
-            }
-          >
+          <button className="btn-primary" onClick={newIndex}>
             + Add index
           </button>
         </div>
@@ -178,7 +183,7 @@ export default function App() {
             </p>
             <button
               className="btn-primary mt-4"
-              onClick={() => setEditing({ ix: { ...DEFAULT_INDEX }, isNew: true })}
+              onClick={newIndex}
             >
               + Add your first index
             </button>
@@ -190,11 +195,11 @@ export default function App() {
                 key={ix.id}
                 ix={ix}
                 progress={jobs[ix.id]}
-                onIndex={(force) => startIndex(ix.id, force)}
-                onEdit={() => setEditing({ ix, isNew: false })}
-                onDelete={() => deleteIndex(ix)}
-                onAgentsMd={() => setAgentsFor(ix)}
-                onExport={() => setExportFor(ix)}
+                onIndex={onCardIndex}
+                onEdit={onCardEdit}
+                onDelete={deleteIndex}
+                onAgentsMd={setAgentsFor}
+                onExport={setExportFor}
               />
             ))}
           </div>
@@ -207,7 +212,7 @@ export default function App() {
         indexes={indexes}
         open={drawerOpen}
         onToggle={() => setDrawerOpen((o) => !o)}
-        onCancel={(id) => api.cancelIndex(id)}
+        onCancel={(id) => api.cancelIndex(id).catch((e) => setError(String(e)))}
         onDismiss={(id) => setFinished(({ [id]: _, ...rest }) => rest)}
       />
 

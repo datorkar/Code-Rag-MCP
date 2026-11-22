@@ -56,6 +56,8 @@ export function IndexModal({ initial, isNew, models, onClose, onSave }: Props) {
       title={isNew ? "Add index" : `Edit “${initial.name}”`}
       onClose={onClose}
       wide
+      locked={busy}
+      dismissOnBackdrop={false}
       footer={
         <>
           <button className="btn-ghost" onClick={onClose} disabled={busy}>

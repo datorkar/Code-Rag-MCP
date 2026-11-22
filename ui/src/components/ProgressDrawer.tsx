@@ -47,7 +47,7 @@ export function ProgressDrawer({ jobs, finished, indexes, open, onToggle, onCanc
   const name = (id: string) => indexes.find((i) => i.id === id)?.name ?? id;
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-900/95 backdrop-blur">
+    <div className="border-t border-zinc-800 bg-zinc-900">
       <button
         className="flex w-full items-center justify-between px-5 py-2 text-left text-xs text-zinc-400 hover:text-zinc-200"
         onClick={onToggle}

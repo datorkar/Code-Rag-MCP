@@ -306,3 +306,34 @@ fn chunk_size_clamped_to_model_context() {
     assert_eq!(r.index.chunk_size, 3000);
     assert!(r.note.is_none());
 }
+
+#[test]
+fn save_rejects_missing_root() {
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::with_paths(Paths::at(data.path()).unwrap());
+    let err = engine
+        .save_index(IndexConfig { id: "x".into(), root_path: "/definitely/not/here".into(), ..Default::default() }, None)
+        .unwrap_err();
+    assert!(err.to_string().contains("does not exist"), "{err}");
+}
+
+/// An empty scan of a previously indexed folder (unplugged drive, emptied
+/// workspace) must not wipe the index; a full rebuild still may.
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_scan_keeps_existing_index() {
+    use rag_core::manifest::{FileEntry, Manifest};
+    let data = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    let engine = Engine::with_paths(Paths::at(data.path()).unwrap());
+    let r = engine
+        .save_index(IndexConfig { id: "e".into(), root_path: src.path().to_string_lossy().into(), ..Default::default() }, None)
+        .unwrap();
+    // First sync of the empty folder creates the (empty) table.
+    engine.sync("e", SyncOptions::default()).await.unwrap();
+    let mut files = std::collections::BTreeMap::new();
+    files.insert("a.cpp".to_string(), FileEntry { hash: "h".into(), size: 1, mtime_ns: 0 });
+    Manifest { fingerprint: r.index.fingerprint(), files }.save(&engine.paths, "e").unwrap();
+    let err = engine.sync("e", SyncOptions::default()).await.unwrap_err();
+    assert!(format!("{err:#}").contains("no matching files"), "{err:#}");
+    assert_eq!(Manifest::load(&engine.paths, "e").unwrap().files.len(), 1, "manifest untouched");
+}
