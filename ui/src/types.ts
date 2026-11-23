@@ -55,6 +55,18 @@ export interface GlobalSettings {
   snippet_max_lines: number;
   data_dir: string;
   gpu_features: string[];
+  check_updates: boolean;
+  app_version: string;
+}
+
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  url: string;
+  download_url: string | null;
+  notes: string;
+  published_at: string | null;
 }
 
 export type Phase =

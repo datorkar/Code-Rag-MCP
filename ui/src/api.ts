@@ -6,6 +6,7 @@ import type {
   ImportReport,
   GpuStatus,
   GlobalSettings,
+  UpdateInfo,
   IndexConfig,
   IndexInfo,
   ModelSpec,
@@ -35,4 +36,7 @@ export const api = {
     invoke<ImportReport>("import_index", { path, rootPath, indexId, name }),
   claudeSnippets: () => invoke<ClaudeSnippets>("claude_snippets"),
   registerClaudeMcp: () => invoke<string>("register_claude_mcp"),
+  /** `manual = false`: respects the setting and checks at most daily (may return null). */
+  checkUpdate: (manual: boolean) => invoke<UpdateInfo | null>("check_update", { manual }),
+  openRelease: (url: string) => invoke<void>("open_release", { url }),
 };

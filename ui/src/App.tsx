@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { DEFAULT_INDEX } from "./presets";
-import type { FinishedEvent, GlobalSettings, IndexConfig, IndexInfo, ModelSpec, Progress } from "./types";
+import type { FinishedEvent, GlobalSettings, IndexConfig, IndexInfo, ModelSpec, Progress, UpdateInfo } from "./types";
 import { IndexCard } from "./components/IndexCard";
 import { IndexModal } from "./components/IndexModal";
 import { ProgressDrawer } from "./components/ProgressDrawer";
@@ -31,6 +31,7 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
   const refresh = useCallback(() => {
     api
@@ -44,6 +45,11 @@ export default function App() {
     refresh();
     api.listModels().then(setModels).catch((e) => setError(String(e)));
     api.getSettings().then(setSettings).catch((e) => setError(String(e)));
+    // Automatic update check (setting-controlled, at most daily); failures are silent.
+    api
+      .checkUpdate(false)
+      .then((u) => u?.available && setUpdate(u))
+      .catch(() => {});
     // Pick up MCP-side auto-syncs; skip while the window is hidden/minimised.
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") refresh();
@@ -166,6 +172,23 @@ export default function App() {
         </div>
       )}
 
+      {update && (
+        <div className="flex items-center justify-between bg-indigo-500/10 px-5 py-2 text-sm text-indigo-200">
+          <span>
+            Version {update.latest} is available (you have {update.current}).
+          </span>
+          <span className="flex items-center gap-3">
+            <button className="underline hover:text-white" onClick={() => api.openRelease(update.download_url ?? update.url)}>
+              Download
+            </button>
+            <button className="underline hover:text-white" onClick={() => api.openRelease(update.url)}>
+              What's new
+            </button>
+            <button onClick={() => setUpdate(null)}>×</button>
+          </span>
+        </div>
+      )}
+
       {notice && (
         <div className="flex items-center justify-between bg-amber-500/10 px-5 py-2 text-sm text-amber-300">
           <span>{notice}</span>
@@ -242,6 +265,7 @@ export default function App() {
         <SettingsModal
           initial={settings}
           models={models}
+          onUpdateFound={setUpdate}
           onClose={() => setShowSettings(false)}
           onSave={async (s) => {
             setSettings(await api.saveSettings(s));

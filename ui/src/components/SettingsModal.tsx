@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { ExecutionProvider, GlobalSettings, ModelSpec } from "../types";
+import type { ExecutionProvider, GlobalSettings, ModelSpec, UpdateInfo } from "../types";
 import { Modal } from "./Modal";
 
 export function SettingsModal({
@@ -8,12 +8,33 @@ export function SettingsModal({
   models,
   onClose,
   onSave,
+  onUpdateFound,
 }: {
   initial: GlobalSettings;
   models: ModelSpec[];
   onClose: () => void;
   onSave: (s: GlobalSettings) => Promise<void>;
+  onUpdateFound: (u: UpdateInfo) => void;
 }) {
+  const [checking, setChecking] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState<{ ok: boolean; text: string; info?: UpdateInfo } | null>(null);
+  const checkNow = async () => {
+    setChecking(true);
+    setUpdateMsg(null);
+    try {
+      const u = await api.checkUpdate(true);
+      if (u?.available) {
+        setUpdateMsg({ ok: true, text: `Version ${u.latest} is available.`, info: u });
+        onUpdateFound(u);
+      } else {
+        setUpdateMsg({ ok: true, text: `You have the latest version (${initial.app_version}).` });
+      }
+    } catch (e) {
+      setUpdateMsg({ ok: false, text: `Could not check for updates: ${e}` });
+    } finally {
+      setChecking(false);
+    }
+  };
   const [s, setS] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const providers: ExecutionProvider[] = s.gpu_features.includes("winml")
@@ -185,6 +206,42 @@ export function SettingsModal({
             <input type="number" className="input" min={0} value={s.snippet_max_lines} onChange={num("snippet_max_lines")} />
             <p className="mt-1 text-xs text-zinc-500">Results are trimmed to the best-matching lines. 0 = full chunk.</p>
           </div>
+        </div>
+        <div className="rounded-md border border-zinc-800 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="accent-indigo-500"
+                checked={s.check_updates}
+                onChange={(e) => setS({ ...s, check_updates: e.target.checked })}
+              />
+              Check for updates automatically
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">Version {s.app_version}</span>
+              <button className="btn-ghost" onClick={checkNow} disabled={checking}>
+                {checking ? "Checking…" : "Check now"}
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            At startup, at most once a day, the app asks GitHub for the latest release (no data is sent). Updates are
+            never installed automatically.
+          </p>
+          {updateMsg && (
+            <p className={`mt-2 text-xs ${updateMsg.ok ? "text-emerald-300" : "text-red-300"}`}>
+              {updateMsg.text}{" "}
+              {updateMsg.info && (
+                <button
+                  className="underline"
+                  onClick={() => api.openRelease(updateMsg.info!.download_url ?? updateMsg.info!.url)}
+                >
+                  Download
+                </button>
+              )}
+            </p>
+          )}
         </div>
         <div>
           <label className="label">Data directory</label>

@@ -136,6 +136,10 @@ Exports contain source text: share Unreal Engine indexes only with other UE lice
 
 Settings → *Resource use while indexing*: **Auto** (default: below-normal process priority; integrated GPUs and CPU-only machines switch to Low, discrete GPUs run at full speed), **Low** (below-normal priority, all logical CPU threads but 2 so one physical core stays free, one embedding worker, small batches — keeps laptops responsive), **Max** (normal priority, all cores, 2 GPU workers, large batches). The GPU token budget is shared by all workers and also capped by batch × length², so batches of long chunks shrink sharply.
 
+## Updates
+
+Settings → *Check for updates automatically* (on by default): at startup, at most once a day, the app asks the GitHub Releases API for the latest release of this repository (a plain GET with a generic User-Agent; nothing about you or your indexes is sent). A newer version shows a banner with *Download* (the setup `.exe`) and *What's new*. *Check now* checks immediately. Nothing is downloaded or installed automatically. The check uses the operating system's certificate store, so it works behind TLS-inspecting corporate proxies.
+
 ## Branches & releases
 
 - `develop`: day-to-day work. Every push runs CI (tests on Windows + Linux, Windows installer as a build artifact).

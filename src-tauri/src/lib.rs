@@ -45,6 +45,15 @@ struct GlobalSettings {
     data_dir: String,
     #[serde(default)]
     gpu_features: Vec<String>,
+    #[serde(default = "yes")]
+    check_updates: bool,
+    /// Running app version (read-only).
+    #[serde(default)]
+    app_version: String,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Serialize, Clone)]
@@ -112,6 +121,8 @@ fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
         snippet_max_lines: c.snippet_max_lines,
         data_dir: engine.paths.root().display().to_string(),
         gpu_features: gpu,
+        check_updates: c.check_updates,
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -135,6 +146,7 @@ fn save_settings(state: State<'_, AppState>, settings: GlobalSettings) -> CmdRes
             c.rerank_candidates = settings.rerank_candidates.clamp(5, 200);
             c.auto_sync_max_files = settings.auto_sync_max_files;
             c.snippet_max_lines = settings.snippet_max_lines;
+            c.check_updates = settings.check_updates;
         })
         .map_err(err)?;
     Ok(settings_of(&c, &state.engine))
@@ -506,6 +518,66 @@ async fn register_claude_mcp() -> CmdResult<String> {
     .map_err(err)?
 }
 
+/// Check GitHub for a newer release. `manual = false` (startup) respects the
+/// "check for updates" setting and checks at most once a day.
+#[tauri::command]
+async fn check_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    manual: bool,
+) -> CmdResult<Option<rag_core::update::UpdateInfo>> {
+    if !manual {
+        let c = state.engine.config().map_err(err)?;
+        let recent = c
+            .last_update_check
+            .is_some_and(|t| chrono::Utc::now() - t < chrono::Duration::hours(24));
+        if !c.check_updates || recent {
+            return Ok(None);
+        }
+    }
+    let current = app.package_info().version.to_string();
+    let info = tauri::async_runtime::spawn_blocking(move || rag_core::update::check(&current))
+        .await
+        .map_err(err)?;
+    if !manual {
+        // Record the attempt even if offline, so startup doesn't retry all day.
+        let _ = state.engine.update_settings(|c| c.last_update_check = Some(chrono::Utc::now()));
+    }
+    info.map(Some).map_err(err)
+}
+
+/// Open a release page / download link of this project in the browser.
+#[tauri::command]
+fn open_release(url: String) -> CmdResult<()> {
+    let allowed = format!("https://github.com/{}/releases/", rag_core::update::REPO);
+    if !url.starts_with(&allowed) || url.chars().any(|c| c.is_whitespace() || c == '"') {
+        return Err("only this project's release pages can be opened".into());
+    }
+    open_url(&url)
+}
+
+#[cfg(windows)]
+fn open_url(url: &str) -> CmdResult<()> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (verb, target) = (wide("open"), wide(url));
+    // Hands the https URL to the default browser (no command shell involved).
+    let r = unsafe {
+        ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL)
+    };
+    if (r as isize) <= 32 {
+        return Err(format!("could not open the browser (code {})", r as isize));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn open_url(url: &str) -> CmdResult<()> {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    std::process::Command::new(opener).arg(url).spawn().map(|_| ()).map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -542,6 +614,8 @@ pub fn run() {
             import_index,
             winml_install,
             winml_cancel,
+            check_update,
+            open_release,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

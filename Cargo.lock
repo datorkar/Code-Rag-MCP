@@ -4692,6 +4692,7 @@ name = "local-code-rag"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "rag-core",
  "serde",
  "serde_json",
@@ -4702,6 +4703,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "workspace-hack",
 ]
 
@@ -6259,6 +6261,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-python",
  "tree-sitter-rust",
+ "ureq",
  "windows-sys 0.61.2",
  "workspace-hack",
  "zstd 0.13.5",

@@ -106,7 +106,16 @@ pub struct AppConfig {
     pub auto_sync_max_files: usize,
     /// Results are trimmed to this many lines around the best-matching region.
     pub snippet_max_lines: usize,
+    /// Look for a newer release on GitHub at startup (at most once a day).
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
+    /// Last automatic update check.
+    pub last_update_check: Option<DateTime<Utc>>,
     pub indexes: Vec<IndexConfig>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_reranker() -> Option<String> {
@@ -127,6 +136,8 @@ impl Default for AppConfig {
             rerank_candidates: 30,
             auto_sync_max_files: 200,
             snippet_max_lines: 40,
+            check_updates: true,
+            last_update_check: None,
             indexes: Vec::new(),
         }
     }
