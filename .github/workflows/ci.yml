@@ -1,8 +1,11 @@
 name: CI
 
+# main is built and published by release.yml.
 on:
   push:
+    branches: [develop, "claude/**"]
   pull_request:
+  workflow_dispatch:
 
 # A newer push to the same branch cancels the older, still-running build.
 concurrency:

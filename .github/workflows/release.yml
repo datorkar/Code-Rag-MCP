@@ -1,0 +1,101 @@
+name: Release
+
+# Every push to main publishes a GitHub Release v<version>, where <version> is
+# "version" in src-tauri/tauri.conf.json. Bump it on develop before merging.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never cancel a release half-way; queue a newer one behind it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ORT_CUDA_VERSION: "13"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  version:
+    name: check version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          tag="v$version"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists. Bump \"version\" in src-tauri/tauri.conf.json on develop, then merge to main again."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag"
+
+  test:
+    name: tests (windows)
+    needs: version
+    runs-on: windows-latest
+    env:
+      LOCAL_CODE_RAG_WINML_DIR: ${{ github.workspace }}/src-tauri/binaries/winml
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: node scripts/fetch-winml.mjs
+      - run: cargo test -p rag-core --features winml -p rag-mcp
+      - run: cargo test -p rag-core --features winml --test winml_smoke -- --ignored --nocapture
+
+  publish:
+    name: build + publish (windows)
+    needs: [version, test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx tauri build
+      # Stand-alone MCP server (for use without the app) as one zip.
+      - shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-mcp | Out-Null
+          Copy-Item target/release/rag-mcp.exe dist-mcp/
+          Copy-Item src-tauri/binaries/winml/*.dll dist-mcp/
+          Compress-Archive -Path dist-mcp/* -DestinationPath "rag-mcp-${{ needs.version.outputs.tag }}-windows-x64.zip"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Local Code RAG ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+            rag-mcp-${{ needs.version.outputs.tag }}-windows-x64.zip
