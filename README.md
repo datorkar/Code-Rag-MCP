@@ -139,7 +139,7 @@ Settings → *Resource use while indexing*: **Auto** (default: below-normal proc
 ## Branches & releases
 
 - `develop`: day-to-day work. Every push runs CI (tests on Windows + Linux, Windows installer as a build artifact).
-- `main`: releases only. Each push (merge from `develop`) runs the Windows tests, builds the installer and publishes a GitHub Release `v<version>` with the NSIS `.exe`, the `.msi` and a stand-alone `rag-mcp` zip. `<version>` comes from `src-tauri/tauri.conf.json`: bump it on `develop` before merging; if that release already exists the workflow stops immediately with a message.
+- `main`: releases only. Each push (merge from `develop`, already tested by CI there) builds the installer and publishes a GitHub Release `v<version>` with the NSIS `.exe`, the `.msi` and a stand-alone `rag-mcp` zip. `<version>` comes from `src-tauri/tauri.conf.json`: bump it on `develop` before merging; if that release already exists the workflow stops immediately with a message.
 
 ## Build speed
 

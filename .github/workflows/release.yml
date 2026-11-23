@@ -2,6 +2,7 @@ name: Release
 
 # Every push to main publishes a GitHub Release v<version>, where <version> is
 # "version" in src-tauri/tauri.conf.json. Bump it on develop before merging.
+# Tests are not repeated here: main only receives commits CI already tested on develop.
 on:
   push:
     branches: [main]
@@ -41,32 +42,9 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Releasing $tag"
 
-  test:
-    name: tests (windows)
-    needs: version
-    runs-on: windows-latest
-    env:
-      LOCAL_CODE_RAG_WINML_DIR: ${{ github.workspace }}/src-tauri/binaries/winml
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      # protoc for lance's build scripts (arduino/setup-protoc still runs on deprecated Node 20).
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: protoc
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - run: node scripts/fetch-winml.mjs
-      - run: cargo test -p rag-core --features winml -p rag-mcp
-      - run: cargo test -p rag-core --features winml --test winml_smoke -- --ignored --nocapture
-
   publish:
     name: build + publish (windows)
-    needs: [version, test]
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
