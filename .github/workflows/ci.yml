@@ -40,9 +40,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: arduino/setup-protoc@v3
+      # protoc for lance's build scripts (arduino/setup-protoc still runs on deprecated Node 20).
+      - uses: taiki-e/install-action@v2
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          tool: protoc
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -75,9 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: arduino/setup-protoc@v3
+      # protoc for lance's build scripts (arduino/setup-protoc still runs on deprecated Node 20).
+      - uses: taiki-e/install-action@v2
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          tool: protoc
       # Windows: cache the compiled target dir (sccache fails on long rustc command lines).
       - uses: Swatinem/rust-cache@v2
         with:
