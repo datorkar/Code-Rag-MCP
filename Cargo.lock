@@ -4689,7 +4689,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "local-code-rag"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "rag-core",
@@ -6233,7 +6233,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rag-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6266,7 +6266,7 @@ dependencies = [
 
 [[package]]
 name = "rag-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",

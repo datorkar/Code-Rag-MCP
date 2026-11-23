@@ -4,7 +4,7 @@ members = ["crates/rag-core", "crates/rag-mcp", "crates/workspace-hack", "src-ta
 default-members = ["crates/rag-core", "crates/rag-mcp"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 rust-version = "1.94"  # lancedb 0.41 MSRV; std file locks need 1.89+
