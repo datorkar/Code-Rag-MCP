@@ -39,5 +39,16 @@
     "resources": {
       "binaries/ort/*": "./"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/datorkar/Code-Rag-MCP/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

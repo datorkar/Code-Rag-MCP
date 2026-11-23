@@ -226,20 +226,13 @@ export function SettingsModal({
             </div>
           </div>
           <p className="mt-1 text-xs text-zinc-500">
-            At startup, at most once a day, the app asks GitHub for the latest release (no data is sent). Updates are
-            never installed automatically.
+            At startup, at most once a day, the app checks GitHub for a newer signed release (no data is sent). You
+            choose when to install; the installer is verified against the app's built-in key before it runs.
           </p>
           {updateMsg && (
             <p className={`mt-2 text-xs ${updateMsg.ok ? "text-emerald-300" : "text-red-300"}`}>
-              {updateMsg.text}{" "}
-              {updateMsg.info && (
-                <button
-                  className="underline"
-                  onClick={() => api.openRelease(updateMsg.info!.download_url ?? updateMsg.info!.url)}
-                >
-                  Download
-                </button>
-              )}
+              {updateMsg.text}
+              {updateMsg.info && " Use the banner at the top of the window to install it."}
             </p>
           )}
         </div>

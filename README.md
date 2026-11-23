@@ -138,12 +138,25 @@ Settings → *Resource use while indexing*: **Auto** (default: below-normal proc
 
 ## Updates
 
-Settings → *Check for updates automatically* (on by default): at startup, at most once a day, the app asks the GitHub Releases API for the latest release of this repository (a plain GET with a generic User-Agent; nothing about you or your indexes is sent). A newer version shows a banner with *Download* (the setup `.exe`) and *What's new*. *Check now* checks immediately. Nothing is downloaded or installed automatically. The check uses the operating system's certificate store, so it works behind TLS-inspecting corporate proxies.
+The app updates itself from GitHub Releases with the Tauri updater. Settings → *Check for updates automatically* (on by default) checks at startup, at most once a day; *Check now* checks immediately. A newer version shows a banner with *Install & restart*: the installer is downloaded, its signature is verified against the public key built into the app, it installs (passive NSIS, no prompts) and the app restarts. Nothing installs without that click. Requests use the OS certificate store and system proxy settings. Local/CI test builds have no updater key, so updates are disabled there.
+
+**One-time setup (signing key):**
+1. On your machine: `npx tauri signer generate -w %USERPROFILE%\.tauri\local-code-rag.key` (choose a password; keep the private key safe — it is needed for every future release).
+2. GitHub → repository → Settings → Environments → **`release`** (create it):
+   - secret `TAURI_SIGNING_PRIVATE_KEY`: contents of `local-code-rag.key`
+   - secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: its password
+   - variable `TAURI_UPDATER_PUBKEY`: contents of `local-code-rag.key.pub`
+   - optionally restrict the environment to the `main` branch.
+3. Release as usual (bump the version, merge to `main`). The release workflow refuses to publish without these.
+
+Each release then contains `LocalCodeRAG_<version>_x64-setup.exe` (+ `.sig`), the `.msi`, `latest.json` (read by the updater) and the stand-alone `rag-mcp` zip. Versions before the first signed release cannot update themselves; install that one manually.
+
+**Model downloads** (Hugging Face) also use the OS certificate store (patched `hf-hub`, see `third_party/hf-hub/PATCHED.md`), so they work behind TLS-inspecting corporate proxies.
 
 ## Branches & releases
 
 - `develop`: day-to-day work. Every push runs CI (tests on Windows + Linux, Windows installer as a build artifact).
-- `main`: releases only. Each push (merge from `develop`, already tested by CI there) builds the installer and publishes a GitHub Release `v<version>` with the NSIS `.exe`, the `.msi` and a stand-alone `rag-mcp` zip. `<version>` comes from `src-tauri/tauri.conf.json`: bump it on `develop` before merging; if that release already exists the workflow stops immediately with a message.
+- `main`: releases only. Each push (merge from `develop`, already tested by CI there) builds and signs the installer and publishes a GitHub Release `v<version>` with the NSIS `.exe` (+ `.sig`), the `.msi`, `latest.json` for the in-app updater and a stand-alone `rag-mcp` zip. `<version>` comes from `src-tauri/tauri.conf.json`: bump it on `develop` before merging; if that release already exists the workflow stops immediately with a message.
 
 ## Build speed
 

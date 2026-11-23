@@ -2,6 +2,7 @@
 resolver = "2"
 members = ["crates/rag-core", "crates/rag-mcp", "crates/workspace-hack", "src-tauri"]
 default-members = ["crates/rag-core", "crates/rag-mcp"]
+exclude = ["third_party"]
 
 [workspace.package]
 version = "0.1.1"
@@ -32,3 +33,8 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# Model downloads (fastembed -> hf-hub) use the OS certificate store; see
+# third_party/hf-hub/PATCHED.md.
+[patch.crates-io]
+hf-hub = { path = "third_party/hf-hub" }

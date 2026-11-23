@@ -25,6 +25,8 @@ tracing-subscriber.workspace = true
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
 tauri-plugin-clipboard-manager = "2.5"
+# In-app updates from GitHub Releases (signed). native-tls = OS certificate store.
+tauri-plugin-updater = { version = "2.14", default-features = false, features = ["native-tls", "system-proxy"] }
 workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
 
 # ONNX Runtime flavour per platform: Windows uses Windows ML (vendor EPs via the

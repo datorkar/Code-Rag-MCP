@@ -12,6 +12,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AgentsMdModal } from "./components/AgentsMdModal";
 import { GpuModal } from "./components/GpuModal";
 import { ExportModal, ImportModal } from "./components/ShareModals";
+import { UpdateBanner } from "./components/UpdateBanner";
 
 type Editing = { ix: IndexConfig; isNew: boolean } | null;
 
@@ -172,22 +173,7 @@ export default function App() {
         </div>
       )}
 
-      {update && (
-        <div className="flex items-center justify-between bg-indigo-500/10 px-5 py-2 text-sm text-indigo-200">
-          <span>
-            Version {update.latest} is available (you have {update.current}).
-          </span>
-          <span className="flex items-center gap-3">
-            <button className="underline hover:text-white" onClick={() => api.openRelease(update.download_url ?? update.url)}>
-              Download
-            </button>
-            <button className="underline hover:text-white" onClick={() => api.openRelease(update.url)}>
-              What's new
-            </button>
-            <button onClick={() => setUpdate(null)}>×</button>
-          </span>
-        </div>
-      )}
+      {update && <UpdateBanner update={update} onClose={() => setUpdate(null)} />}
 
       {notice && (
         <div className="flex items-center justify-between bg-amber-500/10 px-5 py-2 text-sm text-amber-300">

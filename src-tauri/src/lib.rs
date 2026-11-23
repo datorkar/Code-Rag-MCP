@@ -18,6 +18,8 @@ const MCP_SERVER_NAME: &str = "local-code-rag";
 struct AppState {
     engine: Engine,
     jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Result of the last `check_update`, installed by `install_update`.
+    pending_update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -518,14 +520,51 @@ async fn register_claude_mcp() -> CmdResult<String> {
     .map_err(err)?
 }
 
-/// Check GitHub for a newer release. `manual = false` (startup) respects the
-/// "check for updates" setting and checks at most once a day.
+/// GitHub `owner/repo` that publishes releases (release pages only).
+const REPO: &str = "datorkar/Code-Rag-MCP";
+
+#[derive(Serialize, Clone)]
+struct UpdateInfo {
+    current: String,
+    latest: String,
+    available: bool,
+    notes: String,
+    published_at: Option<String>,
+    /// Release page ("What's new").
+    url: String,
+}
+
+#[derive(Serialize, Clone)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+    done: bool,
+}
+
+/// Release builds get the updater's public key from CI; local/dev builds
+/// have none, and updates are disabled there.
+fn updater_configured(app: &AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|u| u.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .is_some_and(|k| !k.trim().is_empty())
+}
+
+/// Look for a newer signed release (GitHub `latest.json`). `manual = false`
+/// (startup) respects the "check for updates" setting and runs at most daily.
 #[tauri::command]
 async fn check_update(
     app: AppHandle,
     state: State<'_, AppState>,
     manual: bool,
-) -> CmdResult<Option<rag_core::update::UpdateInfo>> {
+) -> CmdResult<Option<UpdateInfo>> {
+    use tauri_plugin_updater::UpdaterExt;
+    if !updater_configured(&app) {
+        return if manual { Err("updates are only available in release builds".into()) } else { Ok(None) };
+    }
     if !manual {
         let c = state.engine.config().map_err(err)?;
         let recent = c
@@ -534,22 +573,66 @@ async fn check_update(
         if !c.check_updates || recent {
             return Ok(None);
         }
-    }
-    let current = app.package_info().version.to_string();
-    let info = tauri::async_runtime::spawn_blocking(move || rag_core::update::check(&current))
-        .await
-        .map_err(err)?;
-    if !manual {
         // Record the attempt even if offline, so startup doesn't retry all day.
         let _ = state.engine.update_settings(|c| c.last_update_check = Some(chrono::Utc::now()));
     }
-    info.map(Some).map_err(err)
+    let current = app.package_info().version.to_string();
+    let found = app.updater().map_err(err)?.check().await.map_err(err)?;
+    let info = match &found {
+        Some(u) => UpdateInfo {
+            current: current.clone(),
+            latest: u.version.clone(),
+            available: true,
+            notes: u.body.clone().unwrap_or_default(),
+            published_at: u.date.map(|d| d.to_string()),
+            url: format!("https://github.com/{REPO}/releases/tag/v{}", u.version),
+        },
+        None => UpdateInfo {
+            latest: current.clone(),
+            url: format!("https://github.com/{REPO}/releases/latest"),
+            current,
+            available: false,
+            notes: String::new(),
+            published_at: None,
+        },
+    };
+    *state.pending_update.lock().unwrap() = found;
+    Ok(Some(info))
 }
 
-/// Open a release page / download link of this project in the browser.
+/// Download the update found by `check_update`, verify its signature,
+/// run the installer (passive) and restart into the new version.
+#[tauri::command]
+async fn install_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    if !state.jobs.lock().unwrap().is_empty() {
+        return Err("an index is being built; install the update when it is done".into());
+    }
+    let update = state
+        .pending_update
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("no update available; check for updates first")?;
+    let mut downloaded = 0u64;
+    let emitter = app.clone();
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = emitter.emit("update-progress", UpdateProgress { downloaded, total, done: false });
+            },
+            || {},
+        )
+        .await
+        .map_err(err)?;
+    let _ = app.emit("update-progress", UpdateProgress { downloaded: 0, total: None, done: true });
+    app.restart();
+}
+
+/// Open a release page of this project in the browser.
 #[tauri::command]
 fn open_release(url: String) -> CmdResult<()> {
-    let allowed = format!("https://github.com/{}/releases/", rag_core::update::REPO);
+    let allowed = format!("https://github.com/{REPO}/releases/");
     if !url.starts_with(&allowed) || url.chars().any(|c| c.is_whitespace() || c == '"') {
         return Err("only this project's release pages can be opened".into());
     }
@@ -594,7 +677,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(AppState { engine, jobs: Mutex::new(HashMap::new()) })
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(AppState { engine, jobs: Mutex::new(HashMap::new()), pending_update: Mutex::new(None) })
         .invoke_handler(tauri::generate_handler![
             list_indexes,
             list_models,
@@ -615,6 +699,7 @@ pub fn run() {
             winml_install,
             winml_cancel,
             check_update,
+            install_update,
             open_release,
         ])
         .run(tauri::generate_context!())

@@ -17,7 +17,6 @@ pub mod runtime;
 pub mod share;
 pub mod snippet;
 pub mod store;
-pub mod update;
 pub mod sync;
 pub mod walker;
 #[cfg(feature = "winml")]

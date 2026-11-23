@@ -63,10 +63,16 @@ export interface UpdateInfo {
   current: string;
   latest: string;
   available: boolean;
+  /** Release page ("What's new"). */
   url: string;
-  download_url: string | null;
   notes: string;
   published_at: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+  done: boolean;
 }
 
 export type Phase =

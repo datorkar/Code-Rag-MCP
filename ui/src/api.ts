@@ -38,5 +38,7 @@ export const api = {
   registerClaudeMcp: () => invoke<string>("register_claude_mcp"),
   /** `manual = false`: respects the setting and checks at most daily (may return null). */
   checkUpdate: (manual: boolean) => invoke<UpdateInfo | null>("check_update", { manual }),
+  /** Downloads, verifies and installs the update found by checkUpdate, then restarts the app. */
+  installUpdate: () => invoke<void>("install_update"),
   openRelease: (url: string) => invoke<void>("open_release", { url }),
 };
