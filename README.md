@@ -1,172 +1,95 @@
 # Local Code RAG
 
-Local semantic code search for Claude Code: index folders (Unreal projects, engine source, anything), embed them on-device with FastEmbed/ONNX, store them in LanceDB, and expose hybrid (vector + BM25) search over MCP. A Tauri v2 desktop app manages the indexes.
+Fast, private semantic code search for **Claude Code**. Point it at your folders (an Unreal project, the engine source, any codebase), and Claude can search them by meaning and by name instead of grepping through millions of lines. Everything runs on your machine: code never leaves your PC, and the AI model that understands the code runs on your own GPU or CPU.
 
-```
-crates/rag-core   indexing, chunking, embeddings, LanceDB storage, config, file locks
-crates/rag-mcp    headless MCP server (stdio, rmcp)
-src-tauri + ui/   Tauri v2 desktop manager (React + TS + Tailwind v4)
-```
+> Building it yourself or contributing? See [DEVELOPERS.md](DEVELOPERS.md).
 
-## Build
+## What you get
 
-Requirements: Rust ≥ 1.94, Node 22, `protoc` (LanceDB dependency).
-Windows: MSVC build tools + WebView2 (preinstalled on Win10/11).
+- **A desktop app** to add folders, build indexes and watch progress.
+- **A search tool for Claude Code** (an MCP server). Claude calls it with questions like *"where is the walking movement calculated"* or *"UCharacterMovementComponent PhysWalking"* and gets the most relevant code with file paths, line numbers and the enclosing class/function.
+- **Indexes that stay current.** Only changed files are re-processed, and small changes are picked up automatically when Claude searches.
 
-```powershell
-# MCP server (CUDA by default; falls back to CPU at runtime if CUDA/cuDNN are missing)
-cargo build --release -p rag-mcp
-cargo build --release -p rag-mcp --no-default-features                       # CPU only
-cargo build --release -p rag-mcp --no-default-features --features directml   # AMD/Intel DX12 GPUs
+## Requirements
 
-# Desktop app: bundles rag-mcp + the ONNX Runtime CUDA provider DLLs next to the exe
-npm ci
-npx tauri dev                       # development (run `cargo build -p rag-mcp` once first)
-npx tauri build                     # installer in target/release/bundle
-$env:RAG_FEATURES="none"; npx tauri build      # CPU-only bundle
-```
+- Windows 11, 64-bit. GPU acceleration uses Windows ML (any DirectX 12 GPU); on 24H2 or later the app can also download vendor-specific GPU/NPU providers.
+- About 1 GB free space for the app and a model, plus index space (roughly 1–2 GB for a full Unreal Engine source index).
+- [Claude Code](https://claude.com/claude-code) to use the search from Claude.
 
-**CUDA:** the user's machine needs the **CUDA 13** runtime + **cuDNN 9 (for CUDA 13)** on `PATH` (not bundled, ~1 GB) and a recent NVIDIA driver. The pinned ONNX Runtime (`ort 2.0.0-rc.15`) only ships CUDA 13 prebuilt binaries; with CUDA 12 installed it silently runs on CPU. The GUI's chunks/sec readout shows whether the GPU is actually used (CPU is ~10–30x slower).
+## Install
 
-ONNX Runtime binaries are downloaded at build time by `ort`; models are downloaded from Hugging Face on first use into `<data dir>/models`.
+1. Download `LocalCodeRAG_<version>_x64-setup.exe` from the [latest release](https://github.com/datorkar/Code-Rag-MCP/releases/latest) and run it.
+   Windows SmartScreen may warn because the installer is not signed by a certificate authority: choose *More info → Run anyway*.
+2. Start **Local Code RAG**.
+3. Click **Install to Claude Code**. This registers the search tool with Claude Code, or shows the command / JSON to add it yourself.
 
-## Windows ML (branch `claude/windows-ml`)
+The app updates itself: when a new version is out you'll see a banner with **Install & restart**. Turn the daily check off, or check manually, under **Settings → Updates**.
 
-On Windows this branch uses **Windows ML** instead of a bundled ONNX Runtime + CUDA:
+## Quick start
 
-- `onnxruntime.dll` (ORT 1.28), `Microsoft.Windows.AI.MachineLearning.dll` and `DirectML.dll` from the NuGet package `Microsoft.Windows.AI.MachineLearning` 2.5.96 ship next to the exe. `scripts/fetch-winml.mjs` downloads and checksum-verifies them; `tauri build` and the Tauri `build.rs` call it automatically. No Windows App SDK install and no CUDA is needed. Requires Windows 11 24H2+ for the vendor provider catalog; DirectML works on any Windows 11.
-- At startup the app and `rag-mcp` load that ORT (`ort` `load-dynamic`) and register every certified execution provider Windows ML has already installed (NVIDIA TensorRT-RTX, AMD, Intel OpenVINO, Qualcomm QNN, … depending on the device).
-- **GPU** button → lists the devices ORT sees and the Windows ML providers for this machine, with **Download & enable** (progress + cancel). Windows downloads and updates the providers; new ones are used immediately by the app, and by `rag-mcp` after Claude Code restarts it.
-- Execution provider setting: **Auto/GPU** → a registered vendor GPU provider via ORT's `PREFER_GPU` policy, else DirectML · **NPU** → `PREFER_NPU` (experimental for embeddings) · **DirectML** · **CPU**.
-- Linux/macOS builds are unchanged (bundled ORT, CUDA with CPU fallback).
+1. **+ Add index** → pick the root folder and give it a name. The ID (e.g. `my-game`) is what Claude uses to refer to it.
+2. Pick file types and folders to ignore. Presets for Unreal projects, engine headers, Rust/C++, web and Python are included. `.gitignore` is respected automatically.
+3. **Create & index.** The first build of a large codebase takes a while (the progress drawer shows files, chunks and time left); later updates only process changed files.
+4. In Claude Code, ask about your code. Claude calls `list_indexes` and `search_index` by itself. To make it reliable, click **AGENTS.md** on the index card and paste the paragraph into your project's `AGENTS.md` / `CLAUDE.md`.
 
-Dev/test on Windows:
+## GPU acceleration
 
-```powershell
-node scripts/fetch-winml.mjs
-$env:LOCAL_CODE_RAG_WINML_DIR = "$PWD\src-tauri\binaries\winml"
-cargo test -p rag-core --features winml -p rag-mcp
-cargo test -p rag-core --features winml --test winml_smoke -- --ignored --nocapture   # real embedding, lists catalog
-```
+Click **GPU** in the header to see which devices are available and to download Windows ML providers for your hardware (NVIDIA TensorRT-RTX, AMD, Intel OpenVINO, Qualcomm). Without them the app uses DirectML or the CPU.
 
-rag-core needs an ORT flavour feature: `bundled` (or `cuda`) or `winml`; `rag-mcp` and the app pick it per platform.
+**Settings → Execution provider:** *Auto* (best available GPU) · *GPU* · *NPU* (experimental) · *DirectML* · *CPU*.
 
-## Data layout
+A GPU is typically 10–30× faster than the CPU for building indexes. Searching is fast either way.
 
-`%APPDATA%\local-code-rag\` (Windows) · `~/.local/share/local-code-rag/` (Linux) · override with `LOCAL_CODE_RAG_HOME`.
+## Choosing a model
 
-```
-config.json              global settings + per-index config (schema below)
-manifests/<id>.json      relative_path -> {blake3, size, mtime}
-locks/<id>.lock          fs2 advisory lock (GUI indexing vs MCP search/auto-sync)
-lancedb/idx_<id>.lance   chunks: path, start_line, end_line, text, vector
-models/                  FastEmbed ONNX cache
-```
+Each index has its own embedding model (the AI that turns code into searchable vectors). The four recommended ones:
 
-`config.json` follows the blueprint schema (`active_embed_model`, `execution_provider` = `auto|cuda|directml|cpu`, `indexes[]` with `root_path`, `embed_model`, `allowed_extensions`, `ignore_dirs`, `chunk_size`, `chunk_overlap`, `auto_update_on_search`, `auto_update_cooldown_hours`, `last_indexed_at`, `chunk_count`), plus global `embed_batch_size`, `reranker_model`, `rerank_candidates`, `auto_sync_max_files`, `snippet_max_lines` and `description` / `max_file_bytes` (per index).
-
-## How indexing works
-
-1. Walk `root_path` with `ignore` (respects `.gitignore`; skips `ignore_dirs` by name at any depth, case-insensitive; filters by extension; skips files > `max_file_bytes`).
-2. Hash with blake3 — files whose size + mtime match the manifest are not re-read, so a no-change sync of a large tree is just a directory walk.
-3. Diff against the manifest → delete chunks of removed/modified files.
-4. Chunk new/modified files: tree-sitter AST splitting for C/C++/HLSL (`.usf/.ush`), Rust, C#, Python; plain-text splitter otherwise. Each chunk keeps its 1-based line range.
-5. Sort chunks by length (minimises ONNX padding), embed in batches (`embed_batch_size`, default 32), flush to LanceDB every 2048 rows. The embedded text is prefixed with the file path for context.
-6. Rebuild the full-text index on `text` (no stemming / stop words — code-friendly), a scalar index on `path`, and an ANN vector index once a table exceeds 100k rows; then compact.
-
-**Speed features:** each chunk stores a blake3 hash of its embedding input; when a file changes, chunks whose text is unchanged reuse their stored vector and duplicates within a sync are embedded once (results are identical to a full re-embed). Batches are sized by a token budget (32k tokens on GPU, 8k on CPU, configurable) and split automatically on out-of-memory. Database writes run in a separate task while the GPU embeds. Small syncs update the full-text index incrementally; a full index rebuild + compaction only happens when ≥10% of the rows changed. **Precision (per index):** *Standard* (default) runs the model in FP16 on GPU (official `onnx/model_fp16.onnx`; identical results, faster) and FP32 on CPU, automatically. *INT8* loads `onnx/model_quantized.onnx`: in our check (200 code chunks, `bge-small`, CPU) 89% of each query's top-10 matched full precision at 1.45x CPU speed; switching to/from INT8 rebuilds the index. 4-bit and int8/uint8 variants were slower or no faster and less accurate, so they are not offered. Settings → "Force FP32 (troubleshooting)" (or `LOCAL_CODE_RAG_FP16=0|1`) disables FP16 on GPU, e.g. for GPUs with slow FP16 (GTX 10-series); it also applies to the reranker. Missing variant files fall back to FP32. The finished message shows a per-phase time breakdown (scan / chunk / model / embed / write / index).
-
-Changing an index's model or chunk settings changes its fingerprint → next sync is a full rebuild (the GUI warns and offers to do it now). Cancelling keeps all completed files; the next sync resumes.
-
-**Index quality:**
-- *Scope context*: each chunk is embedded with its enclosing scopes from tree-sitter (`// In: namespace X > class UFoo > void UFoo::Tick(float)`), so a chunk from the middle of a long function still knows where it lives. Results show this as `In: …`.
-- *Split identifiers*: the keyword index also contains the parts of compound identifiers (`UCharacterMovementComponent` → `character movement component`), and queries are split the same way, so plain words find `PascalCase` / `snake_case` names.
-- *Licence headers*: on a full rebuild, leading comment blocks that start many files (≥5%, at least 20; years normalised) are detected per index and left out of embeddings and keyword search. Line numbers stay file-relative; source files are untouched.
-- *Results*: overlapping or adjacent excerpts of one file are merged into one result. `search_index` accepts `path_filter` (glob such as `Runtime/Engine/**`, or a folder prefix) and `extensions` (e.g. `[".h"]`).
-
-Search embeds the query (with the model's own query/document prefixes, e.g. BGE, Nomic, ModernBERT, E5, Gemma), runs LanceDB hybrid search (vector + BM25, fused with Reciprocal Rank Fusion) over the top `rerank_candidates` (30), re-scores them with a cross-encoder (`reranker_model`, default `jinaai/jina-reranker-v2-base-multilingual`, `null` disables), and returns the top `limit`. Each result is trimmed to the `snippet_max_lines` (40) lines that best match the query terms (identifiers are split on `::` and camelCase), labelled with the original chunk range.
-
-**Auto-sync on search** only runs inline when at most `auto_sync_max_files` (200) files changed and no full build is needed. Otherwise the search answers from the existing data with a note asking for "Index now" in the app (or `reindex_path`), so a tool call never blocks on a multi-minute build.
-
-> Note: current LanceDB versions ship their own native BM25 inverted index instead of the older Tantivy-based one; the behaviour is the same (hybrid + RRF), with no extra dependency.
-
-## MCP tools
-
-| Tool | Purpose |
+| Model | Best for |
 |---|---|
-| `list_indexes()` | ids, names, roots, models, chunk counts, last update, status |
-| `search_index(index_id, query, limit=6)` | hybrid search; incremental auto-sync first if `auto_update_on_search` and past cooldown |
-| `reindex_path(index_id, force_full=false)` | manual sync |
+| **jina-embeddings-v2-base-code** (default) | Trained on code. The best all-round choice. |
+| **bge-small-en-v1.5** | About 5× faster and small. Huge codebases or laptops; slightly less precise. |
+| **gte-base-en-v1.5** | Strong general retrieval, good for mixed code + docs. |
+| **modernbert-embed-large** | Highest quality, slowest. |
 
-Logging goes to stderr only (`RUST_LOG` to adjust). If the GUI is indexing, auto-sync is skipped and search proceeds against the last committed data (LanceDB reads are MVCC-safe).
+All other supported models are listed below these. Models download automatically on first use. Changing an index's model requires one full rebuild (the app offers it).
 
-Register (or use the **Install to Claude Code** button, which also generates a CLAUDE.md snippet):
+**Precision** (per index): *Standard* (full quality, uses FP16 on GPU automatically) or *INT8* (about 1.4× faster on CPU; about 1 in 10 top results differ).
 
-```powershell
-claude mcp add --transport stdio --scope user local-code-rag -- "C:\Program Files\Local Code RAG\rag-mcp.exe"
-claude mcp list
-```
+## Settings worth knowing
 
-### Per-project AGENTS.md
+- **Resource use while indexing:**
+  - *Auto*: low priority; laptops and integrated GPUs use *Low*.
+  - *Low*: keeps the PC responsive by leaving a CPU core free and using small batches.
+  - *Max*: full speed.
+- **Reranker:** a second model re-scores the top results for better ranking. It adds about 100–300 ms per search on GPU and is on by default.
+- **Auto-sync limit:** when Claude searches, up to this many changed files are re-indexed on the spot. Larger changes are left for **Index now** in the app.
+- **Excerpt length:** how many lines of each result Claude gets.
 
-Each index card has an **AGENTS.md** button that generates a paste-ready paragraph for that project's `AGENTS.md` / `CLAUDE.md`: its index id, root path and file types, when to call `search_index` vs. `reindex_path`, and the other indexes (e.g. engine source) the agent can also search. Generated by `rag_core::agents_md::agents_md_snippet`.
+Per index (**Settings** on the card): the description shown to Claude, chunk size, precision, and auto-update on search with its cooldown.
 
-**Models:** the picker lists four recommended models first, then all others by dimensions, then context length, then download size (ascending). FastEmbed's pre-quantized duplicates are hidden; use per-index INT8 instead.
+## Sharing an index
 
-| Recommended | Dims | Context | Size | Use |
-|---|---|---|---|---|
-| `jinaai/jina-embeddings-v2-base-code` (default) | 768 | 8192 | 0.64 GB | trained on code; best default |
-| `BAAI/bge-small-en-v1.5` | 384 | 512 | 0.13 GB | ~5x faster; huge codebases, laptops |
-| `Alibaba-NLP/gte-base-en-v1.5` | 768 | 8192 | 0.55 GB | strong general retrieval, long context |
-| `lightonai/modernbert-embed-large` | 1024 | 8192 | 1.58 GB | highest quality, slowest |
+Indexing a whole engine takes time, so a team can share it:
 
-**Chunk size vs. model context:** chunks never exceed what the embedding model can read (≈2.75 characters per token for code, minus room for the path and scope header lines): 512-token models such as `bge-small-en-v1.5` are limited to 1100 characters, 8k models like the jina default are effectively unlimited. Saving an index with a larger chunk size lowers it (with a note), the index dialog adjusts it when you pick a smaller model, and syncs enforce it for older configs.
+- **Export** on an index card saves it as one compressed `.lcrag` file.
+- **Import** (header) loads someone's export against *your* copy of the source. Every piece of code is checked against your local files: anything missing or different is dropped and re-indexed, so an export can never inject code you don't have.
 
-## Sharing indexes (export / import)
+Exports contain source code. Only share them with people allowed to have that code (for Unreal Engine: other licensees, e.g. inside your studio).
 
-Each index card has **Export**: the built index becomes one `.lcrag` file (zstd level 3, lossless; vectors stored as FP16 — same search results, about half the vector size; chunk text, line ranges and the file manifest included, root path and machine-specific timestamps stripped). **Import** (header) previews an export (label, model, chunks, files), asks for *your* copy of the source and a name, then:
+## Tips
 
-1. loads the chunks and converts vectors back to FP32,
-2. **verifies every chunk against your local files** — files that are missing or differ are dropped (so a mismatched or tampered export cannot put text into Claude's context that isn't in your source),
-3. builds the indexes and runs a normal incremental sync: only files that differ from the exporter's copy are embedded.
+- **Unreal Engine source:** index `Engine/Source` with the *Unreal Engine Headers* or *Unreal Project* preset, and ignore the platform and RHI folders you don't use (presets included).
+- **Point Claude at the right place:** `search_index` accepts a path filter (e.g. `Runtime/Engine/**`) and file types (e.g. only `.h` for declarations). The AGENTS.md paragraph tells Claude about this.
+- **"No matching files found":** the app refuses to wipe an index when its folder suddenly looks empty (unplugged drive, unsynced workspace). Fix the folder, or use **Full rebuild** if the files were really removed.
+- **Slow first build:** check **GPU** and the chunks/sec in the progress drawer. If you see CPU speeds on a GPU machine, download the provider for your GPU.
 
-Exports contain source text: share Unreal Engine indexes only with other UE licensees (e.g. inside a studio); open-source code like the Linux kernel can be shared under its license.
+## Privacy & security
 
-## Resource use
+- Code, indexes and searches stay on your PC. The app only goes online to download AI models (Hugging Face), Windows ML GPU providers (Microsoft) and to check for updates (GitHub).
+- It uses your system's certificate store and proxy settings, so it works on corporate networks.
+- Updates are signed; the app verifies the signature before installing.
+- Data location: `%APPDATA%\local-code-rag` (override with the `LOCAL_CODE_RAG_HOME` environment variable).
 
-Settings → *Resource use while indexing*: **Auto** (default: below-normal process priority; integrated GPUs and CPU-only machines switch to Low, discrete GPUs run at full speed), **Low** (below-normal priority, all logical CPU threads but 2 so one physical core stays free, one embedding worker, small batches — keeps laptops responsive), **Max** (normal priority, all cores, 2 GPU workers, large batches). The GPU token budget is shared by all workers and also capped by batch × length², so batches of long chunks shrink sharply.
+## Uninstall
 
-## Updates
-
-The app updates itself from GitHub Releases with the Tauri updater. Settings → *Check for updates automatically* (on by default) checks at startup, at most once a day; *Check now* checks immediately. A newer version shows a banner with *Install & restart*: the installer is downloaded, its signature is verified against the public key built into the app, it installs (passive NSIS, no prompts) and the app restarts. Nothing installs without that click. Requests use the OS certificate store and system proxy settings. Local/CI test builds have no updater key, so updates are disabled there.
-
-**One-time setup (signing key):**
-1. On your machine: `npx tauri signer generate -w %USERPROFILE%\.tauri\local-code-rag.key` (choose a password; keep the private key safe — it is needed for every future release).
-2. GitHub → repository → Settings → Environments → **`release`** (create it):
-   - secret `TAURI_SIGNING_PRIVATE_KEY`: contents of `local-code-rag.key`
-   - secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: its password
-   - variable `TAURI_UPDATER_PUBKEY`: contents of `local-code-rag.key.pub`
-   - optionally restrict the environment to the `main` branch.
-3. Release as usual (bump the version, merge to `main`). The release workflow refuses to publish without these.
-
-Each release then contains `LocalCodeRAG_<version>_x64-setup.exe` (+ `.sig`), the `.msi`, `latest.json` (read by the updater) and the stand-alone `rag-mcp` zip. Versions before the first signed release cannot update themselves; install that one manually.
-
-**Model downloads** (Hugging Face) also use the OS certificate store (patched `hf-hub`, see `third_party/hf-hub/PATCHED.md`), so they work behind TLS-inspecting corporate proxies.
-
-## Branches & releases
-
-- `develop`: day-to-day work. Every push runs CI (tests on Windows + Linux, Windows installer as a build artifact).
-- `main`: releases only. Each push (merge from `develop`, already tested by CI there) builds and signs the installer and publishes a GitHub Release `v<version>` with the NSIS `.exe` (+ `.sig`), the `.msi`, `latest.json` for the in-app updater and a stand-alone `rag-mcp` zip. `<version>` comes from `src-tauri/tauri.conf.json`: bump it on `develop` before merging; if that release already exists the workflow stops immediately with a message.
-
-## Build speed
-
-- **Shared dependency features:** `crates/workspace-hack` (generated by [`cargo-hakari`](https://docs.rs/cargo-hakari)) makes every crate in the workspace build LanceDB and the rest of the dependency tree with the same features, so switching between `rag-mcp`, the app and the tests does not recompile them. ONNX Runtime crates are excluded on purpose (`.config/hakari.toml`). After adding or changing dependencies run `cargo hakari generate && cargo hakari manage-deps`; CI fails if it is stale.
-- **CI cache:** Linux uses `sccache` (compiled crates in the GitHub Actions cache, reused across runs and branches); Windows caches the whole `target/` with `rust-cache` (sccache can't handle Cargo's long rustc command lines on Windows). Caches are saved even when a job fails.
-- **Locally on Windows:** keep the repo on a Dev Drive or exclude `target/` from Defender real-time scanning; optionally `cargo install sccache` and set `RUSTC_WRAPPER=sccache` to share compiled crates between branches.
-
-## Tests
-
-```
-cargo test -p rag-core --features bundled     # unit tests (walker, manifest diff, chunker, model resolution)
-cargo test -p rag-core --features bundled -- --ignored   # end-to-end: downloads bge-small, indexes, searches, syncs
-```
+Uninstall *Local Code RAG* from Windows Settings → Apps. Remove the Claude Code registration with `claude mcp remove --scope user local-code-rag`, and delete `%APPDATA%\local-code-rag` to remove indexes and models.
