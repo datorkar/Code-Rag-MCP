@@ -52,6 +52,13 @@ struct GlobalSettings {
     /// Running app version (read-only).
     #[serde(default)]
     app_version: String,
+    #[serde(default)]
+    default_precision: rag_core::Precision,
+    #[serde(default)]
+    setup_completed: bool,
+    /// Number of configured indexes (read-only; the setup shows on first launch only).
+    #[serde(default)]
+    index_count: usize,
 }
 
 fn yes() -> bool {
@@ -125,6 +132,9 @@ fn settings_of(c: &AppConfig, engine: &Engine) -> GlobalSettings {
         gpu_features: gpu,
         check_updates: c.check_updates,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        default_precision: c.default_precision,
+        setup_completed: c.setup_completed,
+        index_count: c.indexes.len(),
     }
 }
 
@@ -149,6 +159,8 @@ fn save_settings(state: State<'_, AppState>, settings: GlobalSettings) -> CmdRes
             c.auto_sync_max_files = settings.auto_sync_max_files;
             c.snippet_max_lines = settings.snippet_max_lines;
             c.check_updates = settings.check_updates;
+            c.default_precision = settings.default_precision;
+            c.setup_completed = settings.setup_completed;
         })
         .map_err(err)?;
     Ok(settings_of(&c, &state.engine))
@@ -225,6 +237,24 @@ fn start_index(
         let _ = app.emit("index-finished", ev);
     });
     Ok(())
+}
+
+#[derive(Serialize)]
+struct HardwareSummary {
+    hardware: rag_core::hardware::Hardware,
+    recommendation: rag_core::hardware::Recommendation,
+}
+
+/// CPU / RAM / GPUs (with VRAM) and the matching model + settings for the first-run setup.
+#[tauri::command]
+async fn hardware_summary() -> CmdResult<HardwareSummary> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let hardware = rag_core::hardware::detect();
+        let recommendation = rag_core::hardware::recommend(&hardware);
+        HardwareSummary { hardware, recommendation }
+    })
+    .await
+    .map_err(err)
 }
 
 #[derive(Serialize)]
@@ -700,6 +730,7 @@ pub fn run() {
             winml_cancel,
             check_update,
             install_update,
+            hardware_summary,
             open_release,
         ])
         .run(tauri::generate_context!())

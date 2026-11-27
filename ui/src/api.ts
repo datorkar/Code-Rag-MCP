@@ -6,6 +6,7 @@ import type {
   ImportReport,
   GpuStatus,
   GlobalSettings,
+  HardwareSummary,
   UpdateInfo,
   IndexConfig,
   IndexInfo,
@@ -27,6 +28,7 @@ export const api = {
   cancelIndex: (indexId: string) => invoke<boolean>("cancel_index", { indexId }),
   agentsSnippet: (indexId: string) => invoke<string>("agents_snippet", { indexId }),
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
+  hardwareSummary: () => invoke<HardwareSummary>("hardware_summary"),
   winmlInstall: (provider: string | null) => invoke<void>("winml_install", { provider }),
   winmlCancel: () => invoke<boolean>("winml_cancel"),
   exportIndex: (indexId: string, path: string, label: string | null) =>

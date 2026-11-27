@@ -94,6 +94,10 @@ The Tauri updater verifies every update against a public key built into release 
 
 Generate once with `npx tauri signer generate -w %USERPROFILE%\.tauri\local-code-rag.key` and keep the private key safe: every future release must be signed with it. The release job injects the public key with `tauri build --config release.conf.json` (`createUpdaterArtifacts: true`). Dev and CI builds have an empty `pubkey`, so updates are disabled there. Endpoint: `https://github.com/datorkar/Code-Rag-MCP/releases/latest/download/latest.json`.
 
+## First-run setup
+
+`SetupWizard.tsx` runs when `setup_completed` is false and no index exists (or from Settings). `rag_core::hardware` reads CPU threads, RAM (`GlobalMemoryStatusEx`) and display adapters with dedicated VRAM from `HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-…}` (`DriverDesc`, `HardwareInformation.qwMemorySize`). Adapters with < 2 GB dedicated memory or well-known iGPU names count as integrated. `recommend()` maps this to a tier: discrete ≥ 6 GB / discrete < 6 GB → jina-code, Auto; integrated only → bge-small, Low; no GPU → bge-small INT8, Low. The wizard saves `active_embed_model`, `default_precision` (preselected for new indexes) and `resource_mode`.
+
 ## Data layout
 
 `%APPDATA%\local-code-rag\` (Windows) · `~/.local/share/local-code-rag/` (Linux) · override with `LOCAL_CODE_RAG_HOME`.

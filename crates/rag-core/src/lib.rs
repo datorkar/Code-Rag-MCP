@@ -8,6 +8,7 @@ pub mod batching;
 pub mod chunker;
 pub mod config;
 pub mod embedder;
+pub mod hardware;
 pub mod engine;
 pub mod idents;
 pub mod lock;

@@ -57,6 +57,24 @@ export interface GlobalSettings {
   gpu_features: string[];
   check_updates: boolean;
   app_version: string;
+  default_precision: "standard" | "int8";
+  setup_completed: boolean;
+  index_count: number;
+}
+
+export interface HardwareSummary {
+  hardware: {
+    cpu_threads: number;
+    ram_gb: number;
+    gpus: { name: string; vram_gb: number; integrated: boolean }[];
+  };
+  recommendation: {
+    tier: "gpu" | "small_gpu" | "integrated" | "cpu";
+    model: string;
+    precision: "standard" | "int8";
+    resource_mode: "auto" | "max" | "low";
+    reason: string;
+  };
 }
 
 export interface UpdateInfo {

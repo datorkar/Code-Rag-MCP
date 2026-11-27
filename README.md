@@ -27,6 +27,8 @@ The app updates itself: when a new version is out you'll see a banner with **Ins
 
 ## Quick start
 
+On first launch a short **setup** walks you through it: it detects your CPU, memory and GPU, offers to download the GPU/NPU providers for your hardware, recommends a model and resource settings that fit (for example a smaller, faster model on laptops with integrated graphics), and connects Claude Code. You can run it again from **Settings → Run setup again**.
+
 1. **+ Add index** → pick the root folder and give it a name. The ID (e.g. `my-game`) is what Claude uses to refer to it.
 2. Pick file types and folders to ignore. Presets for Unreal projects, engine headers, Rust/C++, web and Python are included. `.gitignore` is respected automatically.
 3. **Create & index.** The first build of a large codebase takes a while (the progress drawer shows files, chunks and time left); later updates only process changed files.

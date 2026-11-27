@@ -13,6 +13,7 @@ import { AgentsMdModal } from "./components/AgentsMdModal";
 import { GpuModal } from "./components/GpuModal";
 import { ExportModal, ImportModal } from "./components/ShareModals";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { SetupWizard } from "./components/SetupWizard";
 
 type Editing = { ix: IndexConfig; isNew: boolean } | null;
 
@@ -33,6 +34,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
 
   const refresh = useCallback(() => {
     api
@@ -45,7 +47,14 @@ export default function App() {
   useEffect(() => {
     refresh();
     api.listModels().then(setModels).catch((e) => setError(String(e)));
-    api.getSettings().then(setSettings).catch((e) => setError(String(e)));
+    api
+      .getSettings()
+      .then((s) => {
+        setSettings(s);
+        // First launch: guided setup (hardware, GPU providers, model, Claude Code).
+        if (!s.setup_completed && s.index_count === 0) setShowSetup(true);
+      })
+      .catch((e) => setError(String(e)));
     // Automatic update check (setting-controlled, at most daily); failures are silent.
     api
       .checkUpdate(false)
@@ -124,7 +133,11 @@ export default function App() {
   const onCardEdit = useCallback((ix: IndexInfo) => setEditing({ ix, isNew: false }), []);
   const newIndex = () =>
     setEditing({
-      ix: { ...DEFAULT_INDEX, embed_model: settings?.active_embed_model ?? DEFAULT_INDEX.embed_model },
+      ix: {
+        ...DEFAULT_INDEX,
+        embed_model: settings?.active_embed_model ?? DEFAULT_INDEX.embed_model,
+        precision: settings?.default_precision ?? DEFAULT_INDEX.precision,
+      },
       isNew: true,
     });
 
@@ -252,10 +265,30 @@ export default function App() {
           initial={settings}
           models={models}
           onUpdateFound={setUpdate}
+          onRunSetup={() => {
+            setShowSetup(true);
+            setShowSettings(false);
+          }}
           onClose={() => setShowSettings(false)}
           onSave={async (s) => {
             setSettings(await api.saveSettings(s));
             setShowSettings(false);
+          }}
+        />
+      )}
+      {showSetup && settings && (
+        <SetupWizard
+          settings={settings}
+          models={models}
+          onFinish={async (s, addIndex) => {
+            const saved = await api.saveSettings(s);
+            setSettings(saved);
+            setShowSetup(false);
+            if (addIndex)
+              setEditing({
+                ix: { ...DEFAULT_INDEX, embed_model: saved.active_embed_model, precision: saved.default_precision },
+                isNew: true,
+              });
           }}
         />
       )}

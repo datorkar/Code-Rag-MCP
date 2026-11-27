@@ -9,12 +9,14 @@ export function SettingsModal({
   onClose,
   onSave,
   onUpdateFound,
+  onRunSetup,
 }: {
   initial: GlobalSettings;
   models: ModelSpec[];
   onClose: () => void;
   onSave: (s: GlobalSettings) => Promise<void>;
   onUpdateFound: (u: UpdateInfo) => void;
+  onRunSetup: () => void;
 }) {
   const [checking, setChecking] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<{ ok: boolean; text: string; info?: UpdateInfo } | null>(null);
@@ -235,6 +237,12 @@ export function SettingsModal({
               {updateMsg.info && " Use the banner at the top of the window to install it."}
             </p>
           )}
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-zinc-500">Guided setup: hardware, GPU providers, model, Claude Code.</span>
+          <button className="btn-ghost" onClick={onRunSetup}>
+            Run setup again
+          </button>
         </div>
         <div>
           <label className="label">Data directory</label>

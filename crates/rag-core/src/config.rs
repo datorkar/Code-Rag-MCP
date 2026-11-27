@@ -111,6 +111,10 @@ pub struct AppConfig {
     pub check_updates: bool,
     /// Last automatic update check.
     pub last_update_check: Option<DateTime<Utc>>,
+    /// Precision preselected for new indexes (set by the first-run setup).
+    pub default_precision: Precision,
+    /// First-run setup finished or skipped.
+    pub setup_completed: bool,
     pub indexes: Vec<IndexConfig>,
 }
 
@@ -138,6 +142,8 @@ impl Default for AppConfig {
             snippet_max_lines: 40,
             check_updates: true,
             last_update_check: None,
+            default_precision: Precision::Standard,
+            setup_completed: false,
             indexes: Vec::new(),
         }
     }
