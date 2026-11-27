@@ -5,7 +5,7 @@ default-members = ["crates/rag-core", "crates/rag-mcp"]
 exclude = ["third_party"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "GPL-3.0-or-later"
 rust-version = "1.94"  # lancedb 0.41 MSRV; std file locks need 1.89+
