@@ -228,7 +228,7 @@ fn start_index(
         let idle = {
             let mut jobs = state.jobs.lock().unwrap();
             jobs.remove(&index_id);
-            jobs.is_empty()
+            jobs.keys().all(|k| is_winml_job(k))
         };
         if idle {
             // The manager never searches: release model sessions (RAM/VRAM).
@@ -373,6 +373,8 @@ fn winml_install(app: AppHandle, state: State<'_, AppState>, provider: Option<St
                 }
             }
             app.state::<AppState>().jobs.lock().unwrap().remove(WINML_JOB);
+            // Also sent when there was nothing to install (no progress events).
+            let _ = app.emit("winml-install-finished", ());
         });
         Ok(())
     }
@@ -380,6 +382,11 @@ fn winml_install(app: AppHandle, state: State<'_, AppState>, provider: Option<St
 
 #[cfg(windows)]
 const WINML_JOB: &str = "__winml_install__";
+
+/// The Windows ML install shares the job map with index jobs.
+fn is_winml_job(key: &str) -> bool {
+    key == "__winml_install__"
+}
 
 #[tauri::command]
 fn winml_cancel(state: State<'_, AppState>) -> bool {
@@ -607,7 +614,14 @@ async fn check_update(
         let _ = state.engine.update_settings(|c| c.last_update_check = Some(chrono::Utc::now()));
     }
     let current = app.package_info().version.to_string();
-    let found = app.updater().map_err(err)?.check().await.map_err(err)?;
+    let found = app
+        .updater_builder()
+        .on_before_exit(move_locked_files_aside)
+        .build()
+        .map_err(err)?
+        .check()
+        .await
+        .map_err(err)?;
     let info = match &found {
         Some(u) => UpdateInfo {
             current: current.clone(),
@@ -634,14 +648,15 @@ async fn check_update(
 /// run the installer (passive) and restart into the new version.
 #[tauri::command]
 async fn install_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    if !state.jobs.lock().unwrap().is_empty() {
+    if state.jobs.lock().unwrap().keys().any(|k| !is_winml_job(k)) {
         return Err("an index is being built; install the update when it is done".into());
     }
+    // Cloned, not taken: a failed download can be retried from the banner.
     let update = state
         .pending_update
         .lock()
         .unwrap()
-        .take()
+        .clone()
         .ok_or("no update available; check for updates first")?;
     let mut downloaded = 0u64;
     let emitter = app.clone();
@@ -657,6 +672,55 @@ async fn install_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult
         .map_err(err)?;
     let _ = app.emit("update-progress", UpdateProgress { downloaded: 0, total: None, done: true });
     app.restart();
+}
+
+/// Files the installer replaces that a running `rag-mcp` (kept open by Claude
+/// Code) holds locked. Windows allows renaming in-use files, so they are moved
+/// aside right before the installer starts; the old process keeps running from
+/// the renamed file and the next start uses the new one.
+const LOCKED_FILES: &[&str] = &["rag-mcp.exe", "onnxruntime.dll", "DirectML.dll", "Microsoft.Windows.AI.MachineLearning.dll"];
+
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok()?.parent().map(|d| d.to_path_buf())
+}
+
+fn move_locked_files_aside() {
+    let Some(dir) = exe_dir() else { return };
+    for name in LOCKED_FILES {
+        let src = dir.join(name);
+        if !src.exists() {
+            continue;
+        }
+        // An older `.old` may still be in use by an older rag-mcp: pick a free name.
+        let dst = (0..10)
+            .map(|i| dir.join(if i == 0 { format!("{name}.old") } else { format!("{name}.old{i}") }))
+            .find(|p| !p.exists() || std::fs::remove_file(p).is_ok());
+        if let Some(dst) = dst {
+            if let Err(e) = std::fs::rename(&src, &dst) {
+                tracing::warn!("could not move {} aside before update: {e}", src.display());
+            }
+        }
+    }
+}
+
+/// After an update: delete files moved aside (once no process uses them). If
+/// an install failed and a file is missing, put the old one back.
+fn cleanup_moved_files() {
+    let Some(dir) = exe_dir() else { return };
+    for name in LOCKED_FILES {
+        let original = dir.join(name);
+        for i in 0..10 {
+            let old = dir.join(if i == 0 { format!("{name}.old") } else { format!("{name}.old{i}") });
+            if !old.exists() {
+                continue;
+            }
+            if !original.exists() {
+                let _ = std::fs::rename(&old, &original);
+            } else {
+                let _ = std::fs::remove_file(&old);
+            }
+        }
+    }
 }
 
 /// Open a release page of this project in the browser.
@@ -704,6 +768,7 @@ pub fn run() {
         tracing::error!("ONNX Runtime unavailable: {e:#}");
     }
     let engine = Engine::new().expect("failed to initialise data directory");
+    cleanup_moved_files();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())

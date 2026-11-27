@@ -55,16 +55,15 @@ export function SetupWizard({
       setProgress((x) => ({ ...x, [p.provider]: p }));
       if (p.done) refreshGpu();
     });
+    const un2 = listen("winml-install-finished", () => {
+      setInstalling(false);
+      refreshGpu();
+    });
     return () => {
       un.then((f) => f());
+      un2.then((f) => f());
     };
   }, []);
-
-  useEffect(() => {
-    if (installing && Object.values(progress).length > 0 && Object.values(progress).every((p) => p.done)) {
-      setInstalling(false);
-    }
-  }, [progress, installing]);
 
   const pending = gpu?.providers.filter((p) => p.certified && p.ready_state !== "ready") ?? [];
   const ready = gpu?.providers.filter((p) => p.ready_state === "ready") ?? [];
