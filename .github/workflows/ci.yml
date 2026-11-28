@@ -85,8 +85,8 @@ jobs:
         with:
           tool: protoc
       # Windows: cache the compiled target dir (sccache fails on long rustc command lines).
-      # Same key as release.yml: releases on main reuse develop's release-profile
-      # build (requires develop to be the default branch, see DEVELOPERS.md).
+      # Same key as release.yml. develop also falls back to main's cache (the
+      # default branch), so a fresh develop cache starts from the last release.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-release
