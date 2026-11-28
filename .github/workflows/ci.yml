@@ -50,10 +50,14 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         uses: mozilla-actions/sccache-action@v0.0.11
       # Linux: registry only (compiled crates live in sccache). Windows: also target/.
+      # One cache per OS, written only by develop (≈ one copy per build type in
+      # the 10 GB repo budget); other branches and PRs restore without saving.
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: test-${{ matrix.os }}
           cache-targets: ${{ matrix.os != 'ubuntu-latest' }}
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       # The workspace-hack crate must match the dependency graph (see README).
       - if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
@@ -81,9 +85,13 @@ jobs:
         with:
           tool: protoc
       # Windows: cache the compiled target dir (sccache fails on long rustc command lines).
+      # Same key as release.yml: releases on main reuse develop's release-profile
+      # build (requires develop to be the default branch, see DEVELOPERS.md).
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: windows-release
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22

@@ -64,9 +64,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: protoc
+      # Restores develop's release-profile cache (same key as ci.yml's installer
+      # job); never saves, so releases don't add another multi-GB copy.
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
+          shared-key: windows-release
+          save-if: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
